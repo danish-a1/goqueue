@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/lib/pq"
 	"github.com/danish-a1/goqueue/adapter/database/migrations"
 	"github.com/danish-a1/goqueue/adapter/utils"
 	"github.com/danish-a1/goqueue/config"
 	"github.com/danish-a1/goqueue/internal/logger"
 	"github.com/danish-a1/goqueue/internal/registry"
 	"github.com/danish-a1/goqueue/job"
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
 )
 
 type DatabaseStore struct {
