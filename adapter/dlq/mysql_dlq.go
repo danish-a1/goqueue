@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/danish-a1/goqueue/adapter/utils"
 	"github.com/danish-a1/goqueue/internal/logger"
 	"github.com/danish-a1/goqueue/job"
-	"github.com/google/uuid"
 )
 
 // MySQLDLQ implements the DLQ interface using a MySQL database

@@ -13,6 +13,7 @@ import (
 
 type RedisConnectionInfo struct {
 	addr     string
+	username string
 	password string
 	db       int
 }
@@ -26,10 +27,11 @@ type RedisClientManager struct {
 	logger          logger.Logger
 }
 
-func NewRedisClientManager(addr string, password string, db int, logger logger.Logger) *RedisClientManager {
+func NewRedisClientManager(addr, username, password string, db int, logger logger.Logger) *RedisClientManager {
 	return &RedisClientManager{
 		connectionInfo: RedisConnectionInfo{
 			addr:     addr,
+			username: username,	
 			password: password,
 			db:       db,
 		},

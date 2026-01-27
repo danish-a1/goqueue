@@ -195,6 +195,7 @@ func NewRedisConfig(address, username, password string, db int) Config {
 		Driver: DriverRedis,
 		DriverConfig: RedisConfig{
 			Addr:     address,
+			Username: username,
 			Password: password,
 			Db:       db,
 		},

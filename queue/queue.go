@@ -73,7 +73,7 @@ func NewQueue(queueName string, cfg config.Config, shutdownTimeout time.Duration
 			queueCancel()
 			return nil, fmt.Errorf("invalid Redis config provided")
 		}
-		redisMgr := manager.NewRedisClientManager(redisCfg.Addr, redisCfg.Password, redisCfg.Db, logger)
+		redisMgr := manager.NewRedisClientManager(redisCfg.Addr, redisCfg.Username, redisCfg.Password, redisCfg.Db, logger)
 		redisMgr.StartPeriodicHealthCheck(queueCtx)
 		client := redisMgr.GetClient(redisCfg.Addr, redisCfg.Password, redisCfg.Db)
 		cfg = cfg.WithDLQAdapter(factory.NewRedisDLQ(client, logger))
