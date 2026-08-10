@@ -109,21 +109,9 @@ func (r *RedisClientManager) checkAllClientsHealth(ctx context.Context) {
 		}
 		r.mu.Unlock()
 
-		r.mu.Lock()
 		if !isHealthy {
-			r.logger.Error("Redis client is unhealthy, reconnecting...", "key", key, "error", err)
-			client.Close()
-			// Recreate the client
-			addr := r.connectionInfo.addr
-			db := r.connectionInfo.db
-			password := r.connectionInfo.password
-
-			newClient := r.newRedisClient(addr, password, db)
-			r.clients[key] = newClient
-			r.healthStatus[key].Store(true)
+			r.logger.Error("Redis client ping failed, marking unhealthy", "key", key, "error", err)
 		}
-
-		r.mu.Unlock()
 
 		pingCancel()
 	}

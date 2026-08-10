@@ -1,5 +1,5 @@
 package goqueue
 
 // Version represents the current version of GoQueue
-const Version = "0.2.5"
+const Version = "0.2.6"
 
