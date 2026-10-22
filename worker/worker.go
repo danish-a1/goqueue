@@ -87,6 +87,10 @@ func (w *Worker) Start(ctx context.Context, noOfWorkers int) error {
 	}
 	w.logger.Info("Starting workers", "count", noOfWorkers, "queue", w.queueName)
 
+	if w.config.ReclaimProcessingOnStart {
+		w.reclaimProcessing()
+	}
+
 	for i := 0; i < noOfWorkers; i++ {
 		w.wg.Add(1)
 		go w.workerLoop(ctx, i)

@@ -458,3 +458,25 @@ func (rs *RedisStore) DequeueMetrics(queueName string) (config.JobMetrics, error
 func (r *RedisStore) IsHealthy() bool {
 	return r.redisManager.IsHealthy(r.redisKey)
 }
+
+// ReclaimProcessing moves jobs left in the processing list of queueName back onto
+// the queue. A job sits in the processing list while a worker runs it; if the
+// process is killed (SIGKILL, OOM, host loss) it stays there and is never run again.
+// Call this only at startup and only when a single consumer instance serves the
+// queue: with several instances it would also move jobs another instance is still
+// running. Returns the number of jobs moved.
+func (rs *RedisStore) ReclaimProcessing(queueName string) (int, error) {
+	ctx := context.Background()
+	processingQueue := processingQueueName + queueName
+	moved := 0
+	for {
+		err := rs.client.RPopLPush(ctx, processingQueue, queueName).Err()
+		if err == redis.Nil {
+			return moved, nil
+		}
+		if err != nil {
+			return moved, fmt.Errorf("reclaim processing jobs: %w", err)
+		}
+		moved++
+	}
+}

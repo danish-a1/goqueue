@@ -79,6 +79,10 @@ type Config struct {
 	Middlewares []middleware.Middleware
 	// JobTimeout is the default timeout for job execution (can be overridden per job)
 	JobTimeout time.Duration
+	// ReclaimProcessingOnStart moves jobs left in the processing list (by a crashed
+	// process) back onto the queue when workers start. Only safe with a single
+	// consumer instance per queue.
+	ReclaimProcessingOnStart bool
 }
 
 // RedisConfig contains configuration options specific to the Redis driver.
@@ -511,6 +515,22 @@ func (c Config) WithMiddlewares(middlewares ...middleware.Middleware) Config {
 //   - Updated Config with the job timeout set
 func (c Config) WithJobTimeout(timeout time.Duration) Config {
 	c.JobTimeout = timeout
+	return c
+}
+
+// WithReclaimProcessingOnStart makes the worker move jobs left in the processing
+// list back onto the queue when it starts. A job stays in that list if the process
+// is killed while running it (SIGKILL, OOM, host loss); without reclaim it is never
+// run again. Only enable this when a single consumer instance serves the queue:
+// with several instances it would also move jobs another instance is still running.
+//
+// Parameters:
+//   - enabled: Whether to reclaim processing jobs on start
+//
+// Returns:
+//   - Updated Config with reclaim on start set
+func (c Config) WithReclaimProcessingOnStart(enabled bool) Config {
+	c.ReclaimProcessingOnStart = enabled
 	return c
 }
 
