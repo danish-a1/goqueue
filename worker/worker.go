@@ -233,6 +233,13 @@ func (w *Worker) processJobSafely(ctx context.Context, workerID int, job job.Job
 		}
 		done := make(chan error, 1)
 		go func() {
+			// The handler runs on its own goroutine, so the recover in
+			// processJobSafely cannot see its panics; turn them into a job error.
+			defer func() {
+				if r := recover(); r != nil {
+					done <- fmt.Errorf("job panicked: %v", r)
+				}
+			}()
 			done <- w.handler(execCtx, &job)
 		}()
 		select {

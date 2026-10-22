@@ -33,7 +33,7 @@ func NewRedisDLQ(client *redis.Client, logger logger.Logger) *RedisDLQ {
 	}
 }
 
-func (r *RedisDLQ) Push(ctx context.Context, job *job.JobContext, err error) error {
+func (r *RedisDLQ) Push(ctx context.Context, job *job.JobContext, jobErr error) error {
 	// Serialize the job
 	jobData, err := json.Marshal(job.Job)
 	if err != nil {
@@ -41,12 +41,17 @@ func (r *RedisDLQ) Push(ctx context.Context, job *job.JobContext, err error) err
 		return fmt.Errorf("failed to marshal job for DLQ: %w", err)
 	}
 
+	errMsg := ""
+	if jobErr != nil {
+		errMsg = jobErr.Error()
+	}
+
 	// Create DLQ entry
 	entry := dlqEntry{
 		Job:       jobData,
 		JobID:     job.JobID,
 		QueueName: job.QueueName,
-		Error:     err.Error(),
+		Error:     errMsg,
 		FailedAt:  time.Now(),
 	}
 
