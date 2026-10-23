@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - TBD
 
+## [0.2.9] - 2026-10-23
+
+### Fixed
+
+- Idle workers now stop promptly on shutdown. The Redis `Pop` blocked forever on an empty queue (`BRPOPLPUSH` with timeout 0), so `Shutdown` always waited the full timeout and returned `context.DeadlineExceeded`. `Pop` now blocks for at most 1 second and returns an empty job, letting the worker loop re-check for shutdown.
+- The metrics goroutine now also exits on `Shutdown`, not only when the `Start` context is canceled, so `Shutdown` no longer times out when the caller keeps that context alive.
+
 ## [0.0.1] - 2025-08-15
 
 ### Added
@@ -45,5 +52,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Worker Management**: Concurrent worker pools with lifecycle management
 - **Metrics**: Built-in metrics collection for monitoring and observability
 
-[Unreleased]: https://github.com/danish-a1/goqueue/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/danish-a1/goqueue/compare/v0.2.9...HEAD
+[0.2.9]: https://github.com/danish-a1/goqueue/compare/v0.2.8...v0.2.9
 [0.0.1]: https://github.com/danish-a1/goqueue/releases/tag/v0.0.1

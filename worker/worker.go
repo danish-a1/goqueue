@@ -359,6 +359,8 @@ func (w *Worker) startMetricsWorker(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
+			case <-w.shutdownCh:
+				return
 			case metrics := <-w.metricsChannel:
 				if err := w.store.EnqueueMetrics(metrics); err != nil {
 					w.logger.Error("Failed to enqueue metrics", "error", err)

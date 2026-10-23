@@ -23,6 +23,7 @@ const (
 	MetricsAckQueueSuffix = ":metrics:ack"
 	JobIndexKeyFormat     = "job_index:%s"
 	retryPollerInterval   = 1 * time.Second
+	popBlockTimeout       = 1 * time.Second // bounds how long an idle worker waits before re-checking shutdown
 )
 
 // Lua scripts are embedded from files in adapter/redis/scripts via scripts.go
@@ -193,8 +194,9 @@ func (rs *RedisStore) Pop(queueName string) (job.JobContext, error) {
 
 	processingQueue := processingQueueName + queueName
 
-	// BRPopLPush blocks until a job is available or context is canceled
-	payload, err := rs.client.BRPopLPush(ctx, queueName, processingQueue, 0).Result()
+	// Bounded block: on timeout redis.Nil returns an empty JobContext so the
+	// worker loop re-checks shutdown instead of blocking forever on an idle queue.
+	payload, err := rs.client.BRPopLPush(ctx, queueName, processingQueue, popBlockTimeout).Result()
 	if err == redis.Nil {
 		return job.JobContext{}, nil
 	}
