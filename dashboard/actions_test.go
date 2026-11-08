@@ -297,6 +297,7 @@ func TestRestore_FromDeleted_ToPending(t *testing.T) {
 func TestRestore_FromDeleted_DlqEntryShape(t *testing.T) {
 	a, _, rc := newTestActions(t)
 	ctx := context.Background()
+	rc.HSet(ctx, gqredis.KeyQueues, "q", "dlq:q")
 	entry := mustJSON(t, dlq.Entry{Job: json.RawMessage(`{"n":5}`), JobID: "e1", JobName: "Job", Queue: "q", Error: "x", FailedAt: time.Now().UTC()})
 	rc.RPush(ctx, gqredis.KeyDeleted("q"), mustJSON(t, map[string]any{
 		"entry": json.RawMessage(entry), "job_id": "e1", "queue": "q", "from": "dead",
@@ -393,6 +394,9 @@ func TestAction_IDLimitsAndUnknownQueue_400(t *testing.T) {
 	if _, err := a.Do(ctx, "delete", "q", SourcePending, ids, actIP); !errors.Is(err, ErrBadRequest) {
 		t.Errorf("101 ids: err = %v", err)
 	}
+	if rc.LLen(ctx, gqredis.KeyPending("q")).Val() != 1 {
+		t.Fatal("nothing may be processed on a rejected call")
+	}
 	if _, err := a.Do(ctx, "delete", "q", SourcePending, ids[:100], actIP); err != nil {
 		t.Errorf("100 ids must be allowed: %v", err)
 	}
@@ -401,22 +405,6 @@ func TestAction_IDLimitsAndUnknownQueue_400(t *testing.T) {
 	}
 	if _, err := a.Do(ctx, "delete", "no-such-queue", SourcePending, []string{"x"}, actIP); !errors.Is(err, ErrBadRequest) {
 		t.Errorf("unknown queue: err = %v", err)
-	}
-}
-
-func TestAction_Over100IDs_400(t *testing.T) {
-	a, _, rc := newTestActions(t)
-	seedIndexed(t, rc, "q", 1, 0, 0, 0)
-	ids := make([]string, 101)
-	for i := range ids {
-		ids[i] = fmt.Sprintf("id%d", i)
-	}
-	_, err := a.Do(context.Background(), "delete", "q", SourcePending, ids, actIP)
-	if !errors.Is(err, ErrBadRequest) {
-		t.Fatalf("err = %v, want ErrBadRequest", err)
-	}
-	if rc.LLen(context.Background(), gqredis.KeyPending("q")).Val() != 1 {
-		t.Fatal("nothing may be processed on a rejected call")
 	}
 }
 
@@ -480,5 +468,68 @@ func TestKill_ConcurrentSameJob_ExactlyOneDone(t *testing.T) {
 	}
 	if n := rc.LLen(ctx, "dlq:q").Val(); n != 1 {
 		t.Fatalf("dead len = %d, want 1", n)
+	}
+}
+
+func TestRestore_UnregisteredQueue_400(t *testing.T) {
+	a, _, rc := newTestActions(t)
+	ctx := context.Background()
+	rc.RPush(ctx, gqredis.KeyDeleted("q"), `{"entry":{"job":{},"id":"x","job_name":"Job"},"job_id":"x"}`)
+	if _, err := a.Do(ctx, "restore", "q", SourceDeleted, []string{"x"}, actIP); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("err = %v, want ErrBadRequest", err)
+	}
+	if rc.LLen(ctx, gqredis.KeyDeleted("q")).Val() != 1 {
+		t.Fatal("deleted list must be unchanged")
+	}
+}
+
+func TestRetry_FromDead_LiveCopyInProcessing_NotFound(t *testing.T) {
+	a, _, rc := newTestActions(t)
+	ctx := context.Background()
+	seedIndexed(t, rc, "q", 0, 0, 1, 0)
+	// Worker still holds q-d0 in processing (DLQ push happens before Ack).
+	live := queuedJob(t, "q-d0", "Job", 3)
+	rc.LPush(ctx, "processing:q", live)
+	rc.HSet(ctx, gqredis.KeyIndex("q"), "q-d0", live)
+
+	res := mustDo(t, a, "retry", "q", SourceDead, "q-d0")
+	eqStrings(t, "NotFound", res.NotFound, []string{"q-d0"})
+	if len(res.Done) != 0 {
+		t.Fatalf("Done = %v", res.Done)
+	}
+	if got := rc.HGet(ctx, gqredis.KeyIndex("q"), "q-d0").Val(); got != live {
+		t.Fatalf("index overwritten: %q", got)
+	}
+	if rc.LLen(ctx, "dlq:q").Val() != 1 || rc.LLen(ctx, gqredis.KeyPending("q")).Val() != 0 {
+		t.Fatal("dead entry must stay and pending must stay empty")
+	}
+}
+
+func TestDelete_FromDead_KeepsLivePendingIndex(t *testing.T) {
+	a, _, rc := newTestActions(t)
+	ctx := context.Background()
+	seedIndexed(t, rc, "q", 1, 0, 0, 0)
+	rc.RPush(ctx, "dlq:q", mustJSON(t, dlq.Entry{Job: json.RawMessage(`{"n":1}`), JobID: "q-p0",
+		JobName: "Job", Queue: "q", Error: "old", FailedAt: time.Now().UTC()}))
+	live := rc.LIndex(ctx, gqredis.KeyPending("q"), 0).Val()
+
+	res := mustDo(t, a, "delete", "q", SourceDead, "q-p0")
+	eqStrings(t, "Done", res.Done, []string{"q-p0"})
+	if got := rc.HGet(ctx, gqredis.KeyIndex("q"), "q-p0").Val(); got != live {
+		t.Fatalf("index = %q, want live pending member", got)
+	}
+	pend := rc.LRange(ctx, gqredis.KeyPending("q"), 0, -1).Val()
+	eqStrings(t, "pending", pend, []string{live})
+}
+
+func TestAction_DuplicateIDs_Deduped(t *testing.T) {
+	a, _, rc := newTestActions(t)
+	ctx := context.Background()
+	seedIndexed(t, rc, "q", 2, 0, 0, 0)
+	res := mustDo(t, a, "delete", "q", SourcePending, "q-p1", "q-p0", "q-p1", "nope", "nope")
+	eqStrings(t, "Done", res.Done, []string{"q-p1", "q-p0"})
+	eqStrings(t, "NotFound", res.NotFound, []string{"nope"})
+	if n := rc.LLen(ctx, gqredis.KeyDeleted("q")).Val(); n != 2 {
+		t.Fatalf("deleted len = %d", n)
 	}
 }

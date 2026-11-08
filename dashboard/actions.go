@@ -55,6 +55,19 @@ type target struct {
 	now                time.Time
 }
 
+// dedupe drops repeated IDs, keeping first-seen order, so no ID lands in both Done and NotFound.
+func dedupe(ids []string) []string {
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func badRequest(format string, args ...any) error {
 	return fmt.Errorf("%w: "+format, append([]any{ErrBadRequest}, args...)...)
 }
@@ -70,6 +83,7 @@ func (a *actions) Do(ctx context.Context, act Action, queue string, src Source, 
 	if len(jobIDs) == 0 || len(jobIDs) > maxActionIDs {
 		return ActionResult{}, badRequest("need 1..%d job ids, got %d", maxActionIDs, len(jobIDs))
 	}
+	jobIDs = dedupe(jobIDs)
 	t, err := a.target(ctx, act, queue, src, actorIP)
 	if err != nil {
 		return ActionResult{}, err
@@ -97,19 +111,9 @@ func (a *actions) Do(ctx context.Context, act Action, queue string, src Source, 
 func (a *actions) target(ctx context.Context, act Action, queue string, src Source, actorIP string) (target, error) {
 	deadKey, err := a.rdb.HGet(ctx, gqredis.KeyQueues, queue).Result()
 	if errors.Is(err, redis.Nil) {
-		// A restore only touches the deleted list and pending; an existing deleted list is
-		// enough proof the queue exists even if the registry entry is missing.
-		if act != ActionRestore {
-			return target{}, badRequest("unknown queue %q", queue)
-		}
-		n, err := a.rdb.Exists(ctx, gqredis.KeyDeleted(queue)).Result()
-		if err != nil {
-			return target{}, err
-		}
-		if n == 0 {
-			return target{}, badRequest("unknown queue %q", queue)
-		}
-	} else if err != nil {
+		return target{}, badRequest("unknown queue %q", queue)
+	}
+	if err != nil {
 		return target{}, err
 	}
 	if deadKey == "" && (act == ActionKill || src == SourceDead) {

@@ -3,7 +3,15 @@
 -- ARGV[1] source kind ("list"|"zset"), ARGV[2] source member, ARGV[3] destination member,
 -- ARGV[4] destination kind ("pending"|"archive"), ARGV[5] job id,
 -- ARGV[6] archive max entries, ARGV[7] archive TTL seconds
--- Returns 1 when moved, 0 when the source member is gone (nothing written).
+-- Returns 1 when moved, 0 when the source member is gone or the index guard refuses (nothing written).
+-- A pending destination claims job_index; refuse if it points at another live copy
+-- (e.g. still in processing because the worker pushes to the DLQ before Ack).
+if ARGV[4] == 'pending' then
+  local cur = redis.call('HGET', KEYS[3], ARGV[5])
+  if cur and cur ~= ARGV[2] then
+    return 0
+  end
+end
 local removed
 if ARGV[1] == 'zset' then
   removed = redis.call('ZREM', KEYS[1], ARGV[2])
