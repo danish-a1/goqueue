@@ -57,6 +57,7 @@ func (rs *RedisStore) Heartbeat(ctx context.Context, p adapter.ProcessInfo) erro
 			"beat", time.Now().UTC().Unix(),
 		)
 		pl.Expire(ctx, key, HeartbeatTTL)
+		pl.Expire(ctx, KeyProcessWork(p.ID), HeartbeatTTL) // no-op when idle; keeps busy entries alive
 		pl.SAdd(ctx, KeyProcesses, p.ID)
 		return nil
 	})
@@ -81,7 +82,12 @@ func (rs *RedisStore) JobStarted(ctx context.Context, processID, queue, jobID, j
 		"started_at": strconv.FormatInt(time.Now().UTC().Unix(), 10),
 	})
 	if err == nil {
-		err = rs.client.HSet(ctx, KeyProcessWork(processID), jobID, raw).Err()
+		key := KeyProcessWork(processID)
+		_, err = rs.client.Pipelined(ctx, func(p redis.Pipeliner) error {
+			p.HSet(ctx, key, jobID, raw)
+			p.Expire(ctx, key, HeartbeatTTL)
+			return nil
+		})
 	}
 	if err != nil {
 		rs.logger.Error("failed to mark job started", "jobID", jobID, "error", err)

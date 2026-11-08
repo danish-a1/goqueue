@@ -146,3 +146,25 @@ func TestWorker_OverMaxRetriesRecordsNoStat(t *testing.T) {
 		t.Error("over-max-retries DLQ path must not record processed/failed")
 	}
 }
+
+func TestWorker_ProcessIDStableBeforeStart(t *testing.T) {
+	w, _, mr := newTrackedWorker(t, "hb_q", time.Hour)
+	id := w.processID
+	if !processIDRe.MatchString(id) {
+		t.Fatalf("processID %q empty or malformed right after NewWorker", id)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := w.Start(ctx, 1); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if w.processID != id {
+		t.Errorf("processID changed on Start: %q -> %q", id, w.processID)
+	}
+	sctx, sc := context.WithTimeout(context.Background(), 2*time.Second)
+	defer sc()
+	_ = w.Shutdown(sctx)
+	if ok, _ := mr.IsMember(redis.KeyProcesses, id); ok {
+		t.Error("process not removed")
+	}
+}

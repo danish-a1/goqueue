@@ -47,7 +47,7 @@ type Worker struct {
 	handler middleware.HandlerFunc
 	// tracker is the store's optional tracking capability (nil if unsupported)
 	tracker adapter.Tracker
-	// processID identifies this worker process in the dashboard keys
+	// processID (set once in NewWorker) identifies this worker process in the dashboard keys
 	processID string
 }
 
@@ -62,6 +62,7 @@ func NewWorker(store adapter.Store, config configuration.Config, queueName strin
 	tracker, _ := store.(adapter.Tracker)
 	return &Worker{
 		tracker:        tracker,
+		processID:      newProcessID(queueName), // immutable before any goroutine starts
 		store:          store,
 		config:         config,
 		queueName:      queueName,

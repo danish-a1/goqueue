@@ -184,3 +184,24 @@ func TestRecordResult_RedisDown_NoPanic(t *testing.T) {
 	store.JobStarted(ctx, "p", "q", "j", "n")
 	store.JobFinished(ctx, "p", "j")
 }
+
+func TestWorkHash_HasTTLAndHeartbeatRefreshes(t *testing.T) {
+	store, mr := newTrackerStore(t)
+	ctx := context.Background()
+	p := adapter.ProcessInfo{ID: "h:1:q:abcd1234", Host: "h", Queue: "q", PID: 1, Concurrency: 1, StartedAt: time.Now()}
+	store.JobStarted(ctx, p.ID, "q", "j1", "Name")
+	if ttl := mr.TTL(KeyProcessWork(p.ID)); ttl != HeartbeatTTL {
+		t.Fatalf("work ttl after JobStarted = %v, want %v", ttl, HeartbeatTTL)
+	}
+	mr.FastForward(40 * time.Second)
+	if err := store.Heartbeat(ctx, p); err != nil {
+		t.Fatalf("Heartbeat: %v", err)
+	}
+	if ttl := mr.TTL(KeyProcessWork(p.ID)); ttl != HeartbeatTTL {
+		t.Errorf("work ttl after Heartbeat = %v, want %v", ttl, HeartbeatTTL)
+	}
+	mr.FastForward(61 * time.Second)
+	if mr.Exists(KeyProcessWork(p.ID)) {
+		t.Error("work hash should expire without heartbeats")
+	}
+}

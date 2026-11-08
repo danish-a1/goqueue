@@ -35,7 +35,6 @@ func (w *Worker) startHeartbeat(ctx context.Context, concurrency int) {
 		return
 	}
 	host, _ := os.Hostname()
-	w.processID = newProcessID(w.queueName)
 	info := adapter.ProcessInfo{ID: w.processID, Host: host, Queue: w.queueName, PID: os.Getpid(), Concurrency: concurrency, StartedAt: time.Now()}
 	beat := func() {
 		c, cancel := trackCtx()
