@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- TBD
+- Tracking keys (Redis): `goqueue:queues` registry, `goqueue:stat:*` processed/failed counters (global, daily, per queue), `goqueue:process:*` worker heartbeats and busy-job hashes. Key names live in `adapter/redis/keys.go`.
 
 ### Changed
 

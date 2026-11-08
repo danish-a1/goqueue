@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/danish-a1/goqueue/adapter/redis"
 	"github.com/danish-a1/goqueue/config"
 	"github.com/danish-a1/goqueue/internal/registry"
 	"github.com/danish-a1/goqueue/job"
@@ -162,4 +164,42 @@ func TestQueueBatchDispatch(t *testing.T) {
 
 	// Wait briefly for jobs to be processed
 	time.Sleep(100 * time.Millisecond)
+}
+
+type keyedDLQ struct{ recordingDLQ }
+
+func (*keyedDLQ) DLQKey(q string) string { return "dlq:x" }
+
+func TestNewQueue_RegistersQueueWithDLQKey(t *testing.T) {
+	cases := []struct {
+		name string
+		dlq  func(cfg config.Config) config.Config
+		want string
+	}{
+		{"key provider", func(c config.Config) config.Config { return c.WithDLQAdapter(&keyedDLQ{}) }, "dlq:x"},
+		{"no key provider", func(c config.Config) config.Config { return c.WithDLQAdapter(&recordingDLQ{}) }, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			cfg := tc.dlq(config.Config{
+				Driver:           config.DriverRedis,
+				DriverConfig:     config.RedisConfig{Addr: mr.Addr()},
+				MaxWorkers:       1,
+				ConcurrencyLimit: 1,
+			})
+			q, err := NewQueue("reg_q", cfg, time.Second)
+			if err != nil {
+				t.Fatalf("NewQueue: %v", err)
+			}
+			defer closeQueue(t, q)
+			keys, _ := mr.HKeys(redis.KeyQueues)
+			if len(keys) != 1 || keys[0] != "reg_q" {
+				t.Fatalf("registry fields = %v, want [reg_q]", keys)
+			}
+			if got := mr.HGet(redis.KeyQueues, "reg_q"); got != tc.want {
+				t.Errorf("dead key = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

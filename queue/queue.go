@@ -11,6 +11,7 @@ import (
 
 	"github.com/danish-a1/goqueue/adapter"
 	"github.com/danish-a1/goqueue/adapter/database"
+	"github.com/danish-a1/goqueue/adapter/dlq"
 	"github.com/danish-a1/goqueue/adapter/dlq/factory"
 	"github.com/danish-a1/goqueue/adapter/memory"
 	"github.com/danish-a1/goqueue/adapter/redis"
@@ -110,6 +111,18 @@ func NewQueue(queueName string, cfg config.Config, shutdownTimeout time.Duration
 	default:
 		queueCancel()
 		return nil, fmt.Errorf("unsupported driver: %s", cfg.Driver)
+	}
+
+	if t, ok := store.(adapter.Tracker); ok {
+		deadKey := ""
+		if kp, ok := cfg.DLQAdapter.(dlq.KeyProvider); ok {
+			deadKey = kp.DLQKey(queueName)
+		}
+		rctx, rcancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := t.RegisterQueue(rctx, queueName, deadKey); err != nil {
+			logger.Error("Failed to register queue", "queue", queueName, "error", err)
+		}
+		rcancel()
 	}
 
 	var statsCollector *stats.Collector

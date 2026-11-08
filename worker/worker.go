@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/danish-a1/goqueue/adapter"
+	"github.com/danish-a1/goqueue/adapter/utils"
 	configuration "github.com/danish-a1/goqueue/config"
 	"github.com/danish-a1/goqueue/internal/logger"
 	"github.com/danish-a1/goqueue/internal/stats"
@@ -44,6 +45,10 @@ type Worker struct {
 	logger logger.Logger
 	// handler processes jobs through the middleware chain
 	handler middleware.HandlerFunc
+	// tracker is the store's optional tracking capability (nil if unsupported)
+	tracker adapter.Tracker
+	// processID identifies this worker process in the dashboard keys
+	processID string
 }
 
 // NewWorker creates a new Worker instance with the specified configuration.
@@ -54,7 +59,9 @@ func NewWorker(store adapter.Store, config configuration.Config, queueName strin
 	// Create handler chain with configured middlewares
 	handler := middleware.Chain(config.Middlewares...)
 
+	tracker, _ := store.(adapter.Tracker)
 	return &Worker{
+		tracker:        tracker,
 		store:          store,
 		config:         config,
 		queueName:      queueName,
@@ -97,6 +104,7 @@ func (w *Worker) Start(ctx context.Context, noOfWorkers int) error {
 	}
 
 	go w.startMetricsWorker(ctx)
+	w.startHeartbeat(ctx, noOfWorkers)
 
 	return nil
 }
@@ -227,6 +235,7 @@ func (w *Worker) processJobSafely(ctx context.Context, workerID int, job job.Job
 
 	for attempt := 1; attempt <= maxAttemptsThisRun; attempt++ {
 		startTime := time.Now()
+		w.trackStarted(job.JobID, utils.GetJobName(job.Job))
 		execCtx := ctx
 		// Empty cancel function that will be replaced if we create a timeout context
 		cancel := func() {
@@ -255,6 +264,7 @@ func (w *Worker) processJobSafely(ctx context.Context, workerID int, job job.Job
 		cancel()
 		processingTime := time.Since(startTime)
 		success := lastErr == nil
+		w.trackFinished(job.JobID, success)
 
 		if isCollectorEnabled {
 			w.statsCollector.RecordComplete(processingTime, success)
@@ -401,10 +411,12 @@ func (w *Worker) Shutdown(ctx context.Context) error {
 	// PHASE 3: Wait with timeout
 	select {
 	case <-allWorkersDone:
+		w.removeProcess()
 		w.logger.Info("All workers shut down gracefully", "queue", w.queueName)
 		return nil
 
 	case <-ctx.Done():
+		w.removeProcess()
 		w.logger.Error("Shutdown timeout reached, some workers may be terminated", "queue", w.queueName)
 		return ctx.Err()
 	}
