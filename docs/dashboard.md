@@ -75,7 +75,7 @@ flowchart LR
 
 - Each job is one atomic Lua move: never in two places, never lost.
 - Up to 100 IDs per click. IDs already gone come back as "not found" and their rows disappear.
-- Retry or restore of an entry without a job name is skipped (no worker could decode it): it stays in Redis, comes back under `Skipped` and its row stays.
+- Retry or restore of an entry without a job name, or any action on an unreadable member, is skipped (cannot be moved): it stays in Redis, comes back under `Skipped` and its row stays.
 - A dead list shared by several queues (custom DLQ key) only acts on entries whose `queue` is the selected queue.
 - Kill and "dead" need a Redis dead list for the queue; queues without one get a 400.
 - Dead and deleted lists keep 1000 entries and expire 30 days after the last push.

@@ -85,7 +85,7 @@
         rows().forEach((c) => { if (remove.has(c.value)) c.closest("tr").remove(); });
         msg.textContent = action + ": " + done.length + " done" +
           (gone.length ? ", " + gone.length + " already gone" : "") +
-          (skipped.length ? ", " + skipped.length + " skipped: job name unknown" : "");
+          (skipped.length ? ", " + skipped.length + " skipped: cannot be moved (missing job name or unreadable data)" : "");
         refresh();
       } catch (_) {
         msg.textContent = "Network error, nothing confirmed. Reload to check.";

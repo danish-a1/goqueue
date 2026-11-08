@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `dashboard` package: a password-protected web UI served as a plain `http.Handler` (Redis driver only, stdlib only, no new dependencies). Shows totals, per-day history, per-queue counts, job IDs, busy workers, retries, dead and deleted jobs, with Retry / Kill / Delete / Restore (single and batch, atomic Lua moves, nothing is hard-deleted). Mount it with `dashboard.New(dashboard.Options{...})`. An empty access token disables it (404 on every path); tokens must be at least 32 bytes. See `docs/dashboard.md`.
 - Tracking keys (Redis): `goqueue:queues` registry, `goqueue:stat:*` processed/failed counters (global, daily, per queue), `goqueue:process:*` worker heartbeats and busy-job hashes, `goqueue:deleted:<queue>` deleted-job lists. Key names live in `adapter/redis/keys.go`. `NewQueue` registers its queue with `HSETNX` (a producer never overwrites an existing dead key); `Worker.Start` registers the consumer's real dead key with `HSET`, so a producer on the default DLQ cannot hide a consumer's custom DLQ list.
-- Dashboard actions return `{"Done","NotFound","Skipped"}`. `Skipped` holds entries still at the source that cannot be requeued because their job name is unknown; the UI keeps their rows.
+- Dashboard actions return `{"Done","NotFound","Skipped"}`. `Skipped` holds entries still at the source that cannot be moved (missing job name or unreadable data); the UI keeps their rows.
 - `examples/dashboard`: runnable demo on miniredis.
 
 ### Changed
