@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/danish-a1/goqueue/adapter/dlq"
 	"github.com/danish-a1/goqueue/adapter/redis"
 	"github.com/danish-a1/goqueue/config"
 	"github.com/danish-a1/goqueue/internal/registry"
@@ -196,6 +197,64 @@ func TestNewQueue_RegistersQueueWithDLQKey(t *testing.T) {
 			keys, _ := mr.HKeys(redis.KeyQueues)
 			if len(keys) != 1 || keys[0] != "reg_q" {
 				t.Fatalf("registry fields = %v, want [reg_q]", keys)
+			}
+			if got := mr.HGet(redis.KeyQueues, "reg_q"); got != tc.want {
+				t.Errorf("dead key = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// registryCfg is a Redis config on mr; dlqAdapter nil means the default RedisDLQ.
+func registryCfg(mr *miniredis.Miniredis, dlqAdapter dlq.DLQAdapter) config.Config {
+	cfg := config.Config{
+		Driver:           config.DriverRedis,
+		DriverConfig:     config.RedisConfig{Addr: mr.Addr()},
+		JobTimeout:       time.Second,
+		MaxWorkers:       1,
+		ConcurrencyLimit: 1,
+	}
+	if dlqAdapter != nil {
+		cfg = cfg.WithDLQAdapter(dlqAdapter)
+	}
+	return cfg
+}
+
+func newRegistryQueue(t *testing.T, cfg config.Config, consume bool) {
+	t.Helper()
+	q, err := NewQueue("reg_q", cfg, time.Second)
+	if err != nil {
+		t.Fatalf("NewQueue: %v", err)
+	}
+	t.Cleanup(func() { closeQueue(t, q) })
+	if consume {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		if err := q.StartWorkers(ctx, 1); err != nil {
+			t.Fatalf("StartWorkers: %v", err)
+		}
+	}
+}
+
+func TestQueueRegistry_ConsumerKeyIsAuthoritative(t *testing.T) {
+	cases := []struct {
+		name  string
+		order []bool // true = consumer (custom DLQ + StartWorkers), false = producer (default DLQ)
+		want  string
+	}{
+		{"consumer then producer", []bool{true, false}, "dlq:x"},
+		{"producer then consumer", []bool{false, true}, "dlq:x"},
+		{"producer only", []bool{false}, "dlq:reg_q"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			for _, consumer := range tc.order {
+				var a dlq.DLQAdapter
+				if consumer {
+					a = &keyedDLQ{}
+				}
+				newRegistryQueue(t, registryCfg(mr, a), consumer)
 			}
 			if got := mr.HGet(redis.KeyQueues, "reg_q"); got != tc.want {
 				t.Errorf("dead key = %q, want %q", got, tc.want)

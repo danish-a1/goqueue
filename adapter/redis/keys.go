@@ -28,7 +28,7 @@ func KeyProcess(id string) string { return "goqueue:process:" + id }
 // KeyProcessWork is the HASH jobID -> {"queue","job_name","started_at"} of in-flight jobs.
 func KeyProcessWork(id string) string { return KeyProcess(id) + ":work" }
 
-// KeyDeleted is the per-queue set of deleted job IDs.
+// KeyDeleted is the per-queue LIST of deleted-entry envelopes ({"entry","job_id","queue","from","deleted_at","deleted_by_ip"}), capped like the DLQ.
 func KeyDeleted(queue string) string { return "goqueue:deleted:" + queue }
 
 // KeyPending is the pending list (the queue name itself).

@@ -19,6 +19,8 @@ func TestTruncateUTF8(t *testing.T) {
 		{"ascii cut", "abcdef", 4, "abcd"},
 		{"cut inside rune drops partial rune", "ab" + euro, 3, "ab"},
 		{"cut after full rune keeps it", "ab" + euro, 5, "ab" + euro},
+		{"negative limit", "abc", -1, ""},
+		{"negative limit empty input", "", -1, ""},
 		{"zero limit", "abc", 0, ""},
 		{"empty input", "", 5, ""},
 	}
@@ -28,7 +30,7 @@ func TestTruncateUTF8(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("TruncateUTF8(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
 			}
-			if len(got) > tc.n || !utf8.ValidString(got) {
+			if len(got) > max(tc.n, 0) || !utf8.ValidString(got) {
 				t.Errorf("result len=%d valid=%v", len(got), utf8.ValidString(got))
 			}
 		})

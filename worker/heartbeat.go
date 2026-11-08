@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/danish-a1/goqueue/adapter"
+	"github.com/danish-a1/goqueue/adapter/dlq"
 	"github.com/danish-a1/goqueue/adapter/redis"
 )
 
@@ -26,6 +27,19 @@ func newProcessID(queue string) string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%s:%d:%s:%s", host, os.Getpid(), queue, hex.EncodeToString(b))
+}
+
+// registerQueue records the consumer's real dead list key, overwriting any
+// key a producer registered with a different (default) DLQ adapter.
+func (w *Worker) registerQueue() {
+	if w.tracker == nil {
+		return
+	}
+	c, cancel := trackCtx()
+	defer cancel()
+	if err := w.tracker.RegisterQueue(c, w.queueName, dlq.KeyFor(w.config.DLQAdapter, w.queueName), true); err != nil {
+		w.logger.Error("Failed to register queue", "queue", w.queueName, "error", err)
+	}
 }
 
 // startHeartbeat registers this worker process and refreshes it until

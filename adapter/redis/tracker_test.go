@@ -94,13 +94,13 @@ func TestKeyNames(t *testing.T) {
 
 func TestRegisterQueue_StoresDeadKey(t *testing.T) {
 	store, mr := newTrackerStore(t)
-	if err := store.RegisterQueue(context.Background(), "q", "dlq:custom"); err != nil {
+	if err := store.RegisterQueue(context.Background(), "q", "dlq:custom", true); err != nil {
 		t.Fatalf("RegisterQueue: %v", err)
 	}
 	if got := mr.HGet(KeyQueues, "q"); got != "dlq:custom" {
 		t.Errorf("HGET = %q, want dlq:custom", got)
 	}
-	if err := store.RegisterQueue(context.Background(), "nodlq", ""); err != nil {
+	if err := store.RegisterQueue(context.Background(), "nodlq", "", true); err != nil {
 		t.Fatalf("RegisterQueue: %v", err)
 	}
 	if !mr.Exists(KeyQueues) || mr.HGet(KeyQueues, "nodlq") != "" {
@@ -203,5 +203,31 @@ func TestWorkHash_HasTTLAndHeartbeatRefreshes(t *testing.T) {
 	mr.FastForward(61 * time.Second)
 	if mr.Exists(KeyProcessWork(p.ID)) {
 		t.Error("work hash should expire without heartbeats")
+	}
+}
+
+func TestRegisterQueue_OverwriteFlag(t *testing.T) {
+	store, mr := newTrackerStore(t)
+	ctx := context.Background()
+	if err := store.RegisterQueue(ctx, "q", "dlq:consumer", true); err != nil {
+		t.Fatalf("RegisterQueue: %v", err)
+	}
+	if err := store.RegisterQueue(ctx, "q", "dlq:q", false); err != nil {
+		t.Fatalf("RegisterQueue: %v", err)
+	}
+	if got := mr.HGet(KeyQueues, "q"); got != "dlq:consumer" {
+		t.Errorf("non-overwriting register replaced key: %q", got)
+	}
+	if err := store.RegisterQueue(ctx, "q", "dlq:other", true); err != nil {
+		t.Fatalf("RegisterQueue: %v", err)
+	}
+	if got := mr.HGet(KeyQueues, "q"); got != "dlq:other" {
+		t.Errorf("overwriting register = %q, want dlq:other", got)
+	}
+	if err := store.RegisterQueue(ctx, "fresh", "dlq:fresh", false); err != nil {
+		t.Fatalf("RegisterQueue: %v", err)
+	}
+	if got := mr.HGet(KeyQueues, "fresh"); got != "dlq:fresh" {
+		t.Errorf("non-overwriting register on new queue = %q", got)
 	}
 }

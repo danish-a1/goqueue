@@ -13,8 +13,13 @@ import (
 var _ adapter.Tracker = (*RedisStore)(nil)
 
 // RegisterQueue records the queue and its dead list key ("" = no Redis DLQ).
-func (rs *RedisStore) RegisterQueue(ctx context.Context, queue, deadKey string) error {
-	return rs.client.HSet(ctx, KeyQueues, queue, deadKey).Err()
+// Without overwrite it is HSETNX, so a producer never clobbers the dead key
+// a consumer registered.
+func (rs *RedisStore) RegisterQueue(ctx context.Context, queue, deadKey string, overwrite bool) error {
+	if overwrite {
+		return rs.client.HSet(ctx, KeyQueues, queue, deadKey).Err()
+	}
+	return rs.client.HSetNX(ctx, KeyQueues, queue, deadKey).Err()
 }
 
 // RecordResult bumps the global, daily and per-queue counters. Errors are

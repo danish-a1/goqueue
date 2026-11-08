@@ -31,6 +31,15 @@ type Entry struct {
 // KeyProvider is implemented by DLQ adapters that store into a Redis list.
 type KeyProvider interface{ DLQKey(queueName string) string }
 
+// KeyFor returns the Redis list a's dead jobs for queueName land in, or ""
+// when a does not store into a Redis list.
+func KeyFor(a DLQAdapter, queueName string) string {
+	if kp, ok := a.(KeyProvider); ok {
+		return kp.DLQKey(queueName)
+	}
+	return ""
+}
+
 // NewEntry builds an Entry from a failed job; the error is truncated UTF-8-safely.
 func NewEntry(jc *job.JobContext, jobErr error) (Entry, error) {
 	data, err := json.Marshal(jc.Job)

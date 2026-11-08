@@ -84,7 +84,7 @@ func (s *server) apiActions(w http.ResponseWriter, r *http.Request) {
 		// Audit line: counts only, never job IDs or payloads. Queue is quoted so a crafted
 		// name cannot forge log lines.
 		s.Logger("dashboard action", "action", req.Action, "queue", strconv.Quote(req.Queue), "source", req.Source,
-			"done", len(res.Done), "not_found", len(res.NotFound), "ip", ip)
+			"done", len(res.Done), "not_found", len(res.NotFound), "skipped", len(res.Skipped), "ip", ip)
 		writeJSON(w, http.StatusOK, res)
 	}
 }

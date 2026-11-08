@@ -24,7 +24,7 @@ Mount examples (net/http and gin) are in the [README](../README.md#dashboard). R
 |---|---|---|
 | `BasePath` | required | Starts with one `/`; no spaces, backslash or braces. Trailing `/` trimmed. |
 | `AccessToken` | none | Empty = every path 404. Under 32 bytes = `New` returns an error. |
-| `Redis` | required with a token | Any `redis.UniversalClient`. |
+| `Redis` | required with a token | Any `redis.UniversalClient`. Must use the same Redis DB as the queues (for example DB 1 if `RedisConfig` uses DB 1); another DB shows an empty dashboard. |
 | `SessionTTL` | 12h | Cookie lifetime. |
 | `PollInterval` | 3s | Stats refresh in the browser. |
 | `ClientIP` | host of `RemoteAddr` | Used only for the login throttle and the audit line. |
@@ -74,7 +74,9 @@ flowchart LR
 | Restore | deleted | pending |
 
 - Each job is one atomic Lua move: never in two places, never lost.
-- Up to 100 IDs per click. IDs already gone come back as "not found".
+- Up to 100 IDs per click. IDs already gone come back as "not found" and their rows disappear.
+- Retry or restore of an entry without a job name is skipped (no worker could decode it): it stays in Redis, comes back under `Skipped` and its row stays.
+- A dead list shared by several queues (custom DLQ key) only acts on entries whose `queue` is the selected queue.
 - Kill and "dead" need a Redis dead list for the queue; queues without one get a 400.
 - Dead and deleted lists keep 1000 entries and expire 30 days after the last push.
 
@@ -85,7 +87,8 @@ sequenceDiagram
   participant W as Worker (per queue)
   participant R as Redis
   participant D as Dashboard
-  W->>R: HSET goqueue:queues queue -> dead key (on start)
+  W->>R: HSETNX goqueue:queues queue -> dead key (NewQueue, producers too)
+  W->>R: HSET goqueue:queues queue -> dead key (Worker.Start, overwrites)
   loop every 10s
     W->>R: HSET goqueue:process:ID, EXPIRE 60s, SADD goqueue:processes
   end
@@ -97,6 +100,8 @@ sequenceDiagram
 
 A tracking write that fails is logged and never fails the job.
 
+The registry entry written by `NewQueue` never overwrites an existing one, so a producer with the default DLQ (`dlq:<queue>`) cannot replace the dead key of a consumer with a custom DLQ adapter. Starting workers writes the consumer's real dead key authoritatively. A queue with only producers still shows up, with the producer's dead key.
+
 ## Redis keys
 
 | Key | Type | Content | Retention |
@@ -106,9 +111,9 @@ A tracking write that fails is logged and never fails the job.
 | `goqueue:stat:<kind>:<YYYY-MM-DD>` | STRING | daily totals (UTC) | 180 days |
 | `goqueue:stat:<queue>:<kind>` | STRING | per-queue totals | none |
 | `goqueue:processes` | SET | process IDs | pruned when the hash is gone |
-| `goqueue:process:<id>` | HASH | host, pid, queues, started_at, concurrency | 60s, refreshed every 10s |
+| `goqueue:process:<id>` | HASH | host, pid, queue, concurrency, started_at, beat (last heartbeat, unix s) | 60s, refreshed every 10s |
 | `goqueue:process:<id>:work` | HASH | jobID -> queue, job_name, started_at | 60s, entry removed on finish |
-| `goqueue:deleted:<queue>` | LIST | deleted jobs | 1000 entries, 30 days |
+| `goqueue:deleted:<queue>` | LIST | deleted-entry envelopes (entry, job_id, queue, from, deleted_at, deleted_by_ip) | 1000 entries, 30 days |
 | `<queue>` | LIST | pending jobs | n/a |
 | `retry:<queue>` | ZSET | scheduled and retrying jobs | n/a |
 | `job_index:<queue>` | HASH | job index, kept in step by actions | n/a |
@@ -123,7 +128,11 @@ Names live in `adapter/redis/keys.go`.
 - **Cookie:** `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=BasePath`. Serve over HTTPS.
 - **CSRF:** login, logout and actions require `Origin` (or `Referer`) host to equal the request `Host`. A proxy that rewrites `Host` breaks this: forward `$host` in nginx.
 - **Throttle:** 10 failed logins per IP per 15 min, then 429. IPv6 is grouped by /64.
-- **Audit log line** (only if you set `Logger`): `dashboard action` with `action`, `queue` (quoted), `source`, `done`, `not_found`, `ip`. Counts only, never job IDs or payloads. The token is never logged.
+- **Audit log line** (only if you set `Logger`): `dashboard action` with `action`, `queue` (quoted), `source`, `done`, `not_found`, `skipped`, `ip`. Counts only, never job IDs or payloads. The token is never logged.
+
+## Upgrading from 0.2.x
+
+Legacy `RedisDLQ` lists (0.2.9 and older) were written with `LPUSH`, newest at the head, uncapped. After the upgrade the first `RPUSH` + `LTRIM -1000 -1` keeps the tail, so the newest legacy entries of a list longer than 1000 are trimmed, and old entries show in reverse order. Before deploying: archive or drain any `dlq:*` list longer than 1000 entries, then reverse each legacy list once. Commands are in the [CHANGELOG](../CHANGELOG.md) 0.3.0 upgrade notes. DLQ adapters that already `RPUSH` with a cap are unaffected.
 
 ## Known limits
 

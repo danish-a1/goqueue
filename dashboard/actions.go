@@ -37,8 +37,10 @@ var allowedSources = map[Action][]Source{
 	ActionRestore: {SourceDeleted},
 }
 
-// ActionResult lists the IDs moved and the IDs no longer at the source, in request order.
-type ActionResult struct{ Done, NotFound []string }
+// ActionResult buckets the requested IDs, in request order: Done were moved, NotFound
+// are no longer at the source, Skipped are still at the source but cannot be moved
+// (no job name, so no worker could decode a requeued job).
+type ActionResult struct{ Done, NotFound, Skipped []string }
 
 type actions struct{ rdb redis.UniversalClient }
 
@@ -55,7 +57,16 @@ type target struct {
 	now                time.Time
 }
 
-// dedupe drops repeated IDs, keeping first-seen order, so no ID lands in both Done and NotFound.
+// outcome is the ActionResult bucket one ID lands in.
+type outcome int
+
+const (
+	moved outcome = iota
+	gone
+	skipped
+)
+
+// dedupe drops repeated IDs, keeping first-seen order, so no ID lands in two buckets.
 func dedupe(ids []string) []string {
 	seen := make(map[string]struct{}, len(ids))
 	out := make([]string, 0, len(ids))
@@ -93,16 +104,13 @@ func (a *actions) Do(ctx context.Context, act Action, queue string, src Source, 
 		return ActionResult{}, err
 	}
 	var res ActionResult
+	buckets := map[outcome]*[]string{moved: &res.Done, gone: &res.NotFound, skipped: &res.Skipped}
 	for i, id := range jobIDs {
-		ok, err := a.move(ctx, t, id, members[i])
+		o, err := a.move(ctx, t, id, members[i])
 		if err != nil {
 			return res, err
 		}
-		if ok {
-			res.Done = append(res.Done, id)
-		} else {
-			res.NotFound = append(res.NotFound, id)
-		}
+		*buckets[o] = append(*buckets[o], id)
 	}
 	return res, nil
 }
@@ -142,14 +150,14 @@ func (a *actions) target(ctx context.Context, act Action, queue string, src Sour
 }
 
 // move builds the destination member and runs the atomic move. A member that cannot be
-// rebuilt (malformed, or no job_name so no worker could decode it) counts as not found.
-func (a *actions) move(ctx context.Context, t target, id, member string) (bool, error) {
+// rebuilt (malformed, or no job_name so no worker could decode it) stays put as skipped.
+func (a *actions) move(ctx context.Context, t target, id, member string) (outcome, error) {
 	if member == "" {
-		return false, nil
+		return gone, nil
 	}
 	dst, ok := t.destination(id, member)
 	if !ok {
-		return false, nil
+		return skipped, nil
 	}
 	srcKind, dstKind := "list", "archive"
 	if t.srcZSet {
@@ -161,7 +169,10 @@ func (a *actions) move(ctx context.Context, t target, id, member string) (bool, 
 	n, err := moveScript.Run(ctx, a.rdb, []string{t.srcKey, t.dstKey, gqredis.KeyIndex(t.queue)},
 		srcKind, member, dst, dstKind, id, dlq.MaxEntries, int64(dlq.EntryTTL/time.Second)).Int64()
 	if err != nil {
-		return false, fmt.Errorf("dashboard: %s %s: %w", t.act, id, err)
+		return gone, fmt.Errorf("dashboard: %s %s: %w", t.act, id, err)
 	}
-	return n == 1, nil
+	if n != 1 {
+		return gone, nil
+	}
+	return moved, nil
 }

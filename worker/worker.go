@@ -105,6 +105,7 @@ func (w *Worker) Start(ctx context.Context, noOfWorkers int) error {
 	}
 
 	go w.startMetricsWorker(ctx)
+	w.registerQueue()
 	w.startHeartbeat(ctx, noOfWorkers)
 
 	return nil

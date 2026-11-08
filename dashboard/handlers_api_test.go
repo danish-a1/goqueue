@@ -200,3 +200,26 @@ func TestAPI_500HidesInternals(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIActions_SkippedBucketInJSON(t *testing.T) {
+	e := newEnv(t, testToken)
+	rc := e.newRedis(t)
+	ctx := context.Background()
+	rc.HSet(ctx, gqredis.KeyQueues, "alpha", "dlq:alpha")
+	rc.RPush(ctx, "dlq:alpha", `{"job":{"n":1},"job_id":"nn","queue":"alpha","error":"x"}`)
+
+	w := postAction(e, `{"action":"retry","queue":"alpha","source":"dead","job_ids":["nn"]}`, "application/json", authed(t, e), sameOrigin)
+	if w.Code != 200 {
+		t.Fatalf("action = %d body %s", w.Code, w.Body)
+	}
+	var raw map[string][]string
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := raw["Skipped"]; len(got) != 1 || got[0] != "nn" {
+		t.Errorf("Skipped = %v, body %s", got, w.Body)
+	}
+	if len(raw["NotFound"]) != 0 || len(raw["Done"]) != 0 {
+		t.Errorf("body %s", w.Body)
+	}
+}

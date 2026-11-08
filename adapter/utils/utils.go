@@ -26,7 +26,11 @@ func GetJobName(jb job.Job) string {
 }
 
 // TruncateUTF8 cuts s to at most n bytes without splitting a multibyte rune.
+// A non-positive n yields "".
 func TruncateUTF8(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
 	if len(s) <= n {
 		return s
 	}

@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `dashboard` package: a password-protected web UI served as a plain `http.Handler` (Redis driver only, stdlib only, no new dependencies). Shows totals, per-day history, per-queue counts, job IDs, busy workers, retries, dead and deleted jobs, with Retry / Kill / Delete / Restore (single and batch, atomic Lua moves, nothing is hard-deleted). Mount it with `dashboard.New(dashboard.Options{...})`. An empty access token disables it (404 on every path); tokens must be at least 32 bytes. See `docs/dashboard.md`.
-- Tracking keys (Redis): `goqueue:queues` registry, `goqueue:stat:*` processed/failed counters (global, daily, per queue), `goqueue:process:*` worker heartbeats and busy-job hashes, `goqueue:deleted:<queue>` deleted-job lists. Key names live in `adapter/redis/keys.go`.
+- Tracking keys (Redis): `goqueue:queues` registry, `goqueue:stat:*` processed/failed counters (global, daily, per queue), `goqueue:process:*` worker heartbeats and busy-job hashes, `goqueue:deleted:<queue>` deleted-job lists. Key names live in `adapter/redis/keys.go`. `NewQueue` registers its queue with `HSETNX` (a producer never overwrites an existing dead key); `Worker.Start` registers the consumer's real dead key with `HSET`, so a producer on the default DLQ cannot hide a consumer's custom DLQ list.
+- Dashboard actions return `{"Done","NotFound","Skipped"}`. `Skipped` holds entries still at the source that cannot be requeued because their job name is unknown; the UI keeps their rows.
 - `examples/dashboard`: runnable demo on miniredis.
 
 ### Changed
@@ -23,6 +24,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `RedisDLQ` ordering: the newest dead job is now at the tail of the list, not the head. Anything that reads the list by index (`LINDEX 0`, `LRANGE 0 n`) now sees the oldest entries first.
 - `RedisDLQ` field rename: `queue_name` is now `queue`. Readers must use `dlq.DecodeEntry` or accept both names. Entries already stored with `queue_name` stay readable through `DecodeEntry`.
+
+### Upgrade notes
+
+Legacy `RedisDLQ` lists (0.2.9 and older) were written with `LPUSH` (newest entry at the head) and never capped. 0.3.0 pushes with `RPUSH` and then `LTRIM -1000 -1`, which keeps the tail. On the first dead job after the upgrade:
+
+- a legacy list longer than 1000 entries loses its newest entries (they sit at the head), and
+- the remaining legacy entries show in reverse order in the dashboard (oldest as newest).
+
+Before upgrading, with the old workers stopped:
+
+1. Find long lists: `redis-cli --scan --pattern 'dlq:*' | while read k; do echo "$(redis-cli LLEN "$k") $k"; done | sort -rn`
+2. Archive or drain every `dlq:*` list longer than 1000 entries, for example `redis-cli COPY dlq:<queue> dlq-archive:<queue>` (Redis 6.2+) and process or drop the archive yourself.
+3. Reverse each legacy list in place once, so the newest entry is at the tail. Run it exactly once per list (a second run reverses it back):
+
+```bash
+redis-cli EVAL "local v = redis.call('LRANGE', KEYS[1], 0, -1); redis.call('DEL', KEYS[1]); for i = #v, 1, -1 do redis.call('RPUSH', KEYS[1], v[i]) end; return #v" 1 dlq:<queue>
+```
+
+Then start the 0.3.0 workers. Custom DLQ adapters that already `RPUSH` with a cap (for example fleetlery's) are unaffected.
 
 ### Fixed
 

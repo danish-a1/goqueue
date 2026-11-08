@@ -114,12 +114,10 @@ func NewQueue(queueName string, cfg config.Config, shutdownTimeout time.Duration
 	}
 
 	if t, ok := store.(adapter.Tracker); ok {
-		deadKey := ""
-		if kp, ok := cfg.DLQAdapter.(dlq.KeyProvider); ok {
-			deadKey = kp.DLQKey(queueName)
-		}
+		// Never overwrite: this may be a producer with the default DLQ while the
+		// consumer uses a custom one. Worker.Start registers authoritatively.
 		rctx, rcancel := context.WithTimeout(context.Background(), 2*time.Second)
-		if err := t.RegisterQueue(rctx, queueName, deadKey); err != nil {
+		if err := t.RegisterQueue(rctx, queueName, dlq.KeyFor(cfg.DLQAdapter, queueName), false); err != nil {
 			logger.Error("Failed to register queue", "queue", queueName, "error", err)
 		}
 		rcancel()

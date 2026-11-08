@@ -124,14 +124,15 @@ func TestRetry_FromDead_RebuildsEnvelope(t *testing.T) {
 	}
 }
 
-func TestRetry_FromDead_NoJobName_NotFound(t *testing.T) {
+func TestRetry_FromDead_NoJobName_Skipped(t *testing.T) {
 	a, _, rc := newTestActions(t)
 	ctx := context.Background()
 	rc.HSet(ctx, gqredis.KeyQueues, "q", "dlq:q")
 	rc.RPush(ctx, "dlq:q", `{"job":{"n":1},"job_id":"nn","queue":"q","error":"x","failed_at":"2026-11-08T10:00:00Z"}`)
 
-	res := mustDo(t, a, "retry", "q", SourceDead, "nn")
-	eqStrings(t, "NotFound", res.NotFound, []string{"nn"})
+	res := mustDo(t, a, "retry", "q", SourceDead, "nn", "gone")
+	eqStrings(t, "Skipped", res.Skipped, []string{"nn"})
+	eqStrings(t, "NotFound", res.NotFound, []string{"gone"})
 	if len(res.Done) != 0 {
 		t.Fatalf("Done = %v", res.Done)
 	}
@@ -531,5 +532,46 @@ func TestAction_DuplicateIDs_Deduped(t *testing.T) {
 	eqStrings(t, "NotFound", res.NotFound, []string{"nope"})
 	if n := rc.LLen(ctx, gqredis.KeyDeleted("q")).Val(); n != 2 {
 		t.Fatalf("deleted len = %d", n)
+	}
+}
+
+func TestRestore_FromDeleted_NoJobName_Skipped(t *testing.T) {
+	a, _, rc := newTestActions(t)
+	ctx := context.Background()
+	rc.HSet(ctx, gqredis.KeyQueues, "q", "dlq:q")
+	rc.RPush(ctx, gqredis.KeyDeleted("q"), `{"entry":{"job":{"n":1},"id":"x"},"job_id":"x","queue":"q"}`)
+
+	res := mustDo(t, a, "restore", "q", SourceDeleted, "x")
+	eqStrings(t, "Skipped", res.Skipped, []string{"x"})
+	if len(res.Done) != 0 || len(res.NotFound) != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if rc.LLen(ctx, gqredis.KeyDeleted("q")).Val() != 1 || rc.LLen(ctx, gqredis.KeyPending("q")).Val() != 0 {
+		t.Fatal("deleted entry must stay and pending must stay empty")
+	}
+}
+
+func TestRetry_FromSharedDeadList_IgnoresOtherQueues(t *testing.T) {
+	a, _, rc := newTestActions(t)
+	ctx := context.Background()
+	rc.HSet(ctx, gqredis.KeyQueues, "q", "dlq:shared")
+	entry := func(q string, n int) string {
+		return mustJSON(t, dlq.Entry{Job: json.RawMessage(fmt.Sprintf(`{"n":%d}`, n)), JobID: "same", JobName: "Job",
+			Queue: q, Error: "x", FailedAt: time.Now().UTC()})
+	}
+	// The other queue's entry is newer, so without the queue filter it would win.
+	rc.RPush(ctx, "dlq:shared", entry("q", 1), entry("other", 2), entry("other", 3))
+	rc.RPush(ctx, "dlq:shared", `{"job":{"n":4},"job_id":"only-other","job_name":"Job","queue":"other"}`,
+		`{"job":{"n":5},"job_id":"legacy-other","job_name":"Job","queue_name":"other"}`)
+
+	res := mustDo(t, a, "retry", "q", SourceDead, "same", "only-other", "legacy-other")
+	eqStrings(t, "Done", res.Done, []string{"same"})
+	eqStrings(t, "NotFound", res.NotFound, []string{"only-other", "legacy-other"})
+	pend := rc.LRange(ctx, gqredis.KeyPending("q"), 0, -1).Val()
+	if len(pend) != 1 || string(decodeQueued(t, pend[0]).Job) != `{"n":1}` {
+		t.Fatalf("pending = %v, want q's own entry", pend)
+	}
+	if rc.LLen(ctx, "dlq:shared").Val() != 4 {
+		t.Fatal("other queue's entries must stay")
 	}
 }

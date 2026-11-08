@@ -19,7 +19,10 @@ type ProcessInfo struct {
 // counters and worker heartbeats (currently only the Redis store). Stores
 // that do not implement it are simply not tracked.
 type Tracker interface {
-	RegisterQueue(ctx context.Context, queue, deadKey string) error
+	// RegisterQueue records queue -> dead list key. overwrite=false keeps an
+	// existing entry (producers); overwrite=true replaces it (consumers, which
+	// know the real DLQ adapter).
+	RegisterQueue(ctx context.Context, queue, deadKey string, overwrite bool) error
 	// RecordResult counts one attempt: processed+1 always, failed+1 when !success.
 	RecordResult(ctx context.Context, queue string, success bool)
 	Heartbeat(ctx context.Context, p ProcessInfo) error

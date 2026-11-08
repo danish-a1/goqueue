@@ -79,10 +79,13 @@
         if (res.redirected) { location.reload(); return; }
         const out = await res.json().catch(() => ({}));
         if (!res.ok) { msg.textContent = out.error || "Failed (" + res.status + ")"; return; }
-        const done = out.Done || [], gone = out.NotFound || [];
+        const done = out.Done || [], gone = out.NotFound || [], skipped = out.Skipped || [];
+        // Skipped jobs are still in Redis, so their rows stay.
         const remove = new Set(done.concat(gone));
         rows().forEach((c) => { if (remove.has(c.value)) c.closest("tr").remove(); });
-        msg.textContent = action + ": " + done.length + " done" + (gone.length ? ", " + gone.length + " already gone" : "");
+        msg.textContent = action + ": " + done.length + " done" +
+          (gone.length ? ", " + gone.length + " already gone" : "") +
+          (skipped.length ? ", " + skipped.length + " skipped: job name unknown" : "");
         refresh();
       } catch (_) {
         msg.textContent = "Network error, nothing confirmed. Reload to check.";

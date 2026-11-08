@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,7 +28,8 @@ type deletedEntry struct {
 
 // resolve returns the exact current source member per ID ("" = not there). Pending and
 // retry use job_index (one HMGET); dead and deleted scan the list, which is capped at
-// dlq.MaxEntries, with the newest member winning for a repeated ID.
+// dlq.MaxEntries, with the newest member winning for a repeated ID. A dead list can be
+// shared by several queues (custom DLQ key), so entries of another queue are skipped.
 func (a *actions) resolve(ctx context.Context, t target, ids []string) ([]string, error) {
 	out := make([]string, len(ids))
 	if t.src == SourcePending || t.src == SourceRetry {
@@ -47,9 +49,14 @@ func (a *actions) resolve(ctx context.Context, t target, ids []string) ([]string
 	byID := make(map[string]string, len(items))
 	for _, m := range items {
 		var k struct {
-			JobID string `json:"job_id"`
+			JobID  string `json:"job_id"`
+			Queue  string `json:"queue"`
+			Legacy string `json:"queue_name"` // pre-0.3.0 dlq.Entry field
 		}
-		if json.Unmarshal([]byte(m), &k) == nil && k.JobID != "" {
+		if json.Unmarshal([]byte(m), &k) != nil || k.JobID == "" {
+			continue
+		}
+		if q := cmp.Or(k.Queue, k.Legacy); q == "" || q == t.queue {
 			byID[k.JobID] = m
 		}
 	}

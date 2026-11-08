@@ -328,9 +328,6 @@ func (rs *RedisStore) RetryJobWithMetadata(queueName string, queuedJob job.JobCo
 		return fmt.Errorf("failed to add job to retry queue: %w", err)
 	}
 
-	// Update the job index with the new retry payload
-	rs.client.HSet(ctx, indexKey, queuedJob.JobID, payload)
-
 	rs.logger.Info("job added to retry queue", "queue", queueName, "jobID", queuedJob.JobID, "retryCount", queuedJob.RetryCount, "retryAt", time.Unix(retryTimestamp, 0))
 	return nil
 }

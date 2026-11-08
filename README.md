@@ -335,7 +335,7 @@ net/http:
 h, err := dashboard.New(dashboard.Options{
     BasePath:    "/goqueue-ui",
     AccessToken: os.Getenv("GO_QUEUE_ACCESS_TOKEN"),
-    Redis:       redisClient, // redis.UniversalClient
+    Redis:       redisClient, // redis.UniversalClient on the same Redis DB as the queues
 })
 if err != nil {
     log.Fatal(err)
@@ -357,6 +357,7 @@ Notes:
 - **Client IP:** the login throttle uses `RemoteAddr` by default. Behind a proxy set `Options.ClientIP` to read a trusted header such as `X-Real-IP` (set by nginx), for example `func(r *http.Request) string { return r.Header.Get("X-Real-IP") }`. Only trust a header your proxy overwrites.
 - **nginx must forward `Host`** (`proxy_set_header Host $host;`). Action POSTs are checked for same origin and get 403 otherwise.
 - **Redis only:** workers must use the Redis store so the tracking keys exist.
+- **Same Redis DB:** `Options.Redis` must point at the same Redis DB the queues use (for example DB 1 if your `RedisConfig` uses DB 1). A client on another DB sees an empty dashboard.
 
 ## License
 
