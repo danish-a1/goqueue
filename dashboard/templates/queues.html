@@ -1,0 +1,15 @@
+{{define "queueTable"}}<div class="scroll"><table><thead><tr><th>Queue</th><th class="n">Pending</th><th class="n">Busy</th>
+<th class="n">Retries</th><th class="n">Dead</th><th class="n">Deleted</th><th class="n">Processed</th><th class="n">Failed</th></tr></thead><tbody>
+{{range .Sum.Queues}}<tr><td><a href="{{$.Base}}/queues/{{pathEscape .Name}}">{{.Name}}</a></td>
+<td class="n">{{.Pending}}</td><td class="n">{{.Busy}}</td>
+<td class="n"><a href="{{$.Base}}/retries?queue={{.Name}}">{{.Retry}}</a></td>
+<td class="n">{{if .DeadKey}}<a href="{{$.Base}}/dead?queue={{.Name}}">{{.Dead}}</a>{{else}}<span class="muted" title="No Redis dead list">-</span>{{end}}</td>
+<td class="n"><a href="{{$.Base}}/deleted?queue={{.Name}}">{{.Deleted}}</a></td>
+<td class="n">{{.Processed}}</td><td class="n">{{.Failed}}</td></tr>
+{{else}}<tr><td colspan="8" class="empty">No queues registered yet.</td></tr>{{end}}
+</tbody></table></div>{{end}}
+
+{{define "queues"}}{{template "head" .}}
+<h2>Queues</h2>
+{{template "queueTable" .}}
+{{template "foot" .}}{{end}}

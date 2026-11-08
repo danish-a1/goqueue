@@ -1,0 +1,14 @@
+{{define "chart"}}<figure class="chart">
+<svg viewBox="0 0 {{.W}} {{.H}}" preserveAspectRatio="none" role="img" aria-label="Processed and failed jobs per day">
+<polyline class="processed" points="{{.Processed}}"/><polyline class="failed" points="{{.Failed}}"/></svg>
+<figcaption><span class="key processed">Processed</span> <span class="key failed">Failed</span>
+<span class="muted">{{.From}} to {{.To}} (UTC), peak {{.Max}}/day</span></figcaption></figure>{{end}}
+
+{{define "analytics"}}{{template "head" .}}
+<h2>Analytics</h2>
+<nav class="sub">{{range .DayOpts}}<a href="?days={{.}}"{{if eq . $.DaysSel}} class="on" aria-current="page"{{end}}>{{.}} days</a>{{end}}</nav>
+{{template "chart" .Chart}}
+<div class="scroll"><table><thead><tr><th>Day (UTC)</th><th class="n">Processed</th><th class="n">Failed</th></tr></thead><tbody>
+{{range .Days}}<tr><td>{{.Day}}</td><td class="n">{{.Processed}}</td><td class="n">{{.Failed}}</td></tr>{{end}}
+</tbody></table></div>
+{{template "foot" .}}{{end}}

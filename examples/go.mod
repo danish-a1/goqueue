@@ -4,7 +4,11 @@ go 1.24.0
 
 replace github.com/danish-a1/goqueue => ../
 
-require github.com/danish-a1/goqueue v0.0.0-00010101000000-000000000000
+require (
+	github.com/alicebob/miniredis/v2 v2.35.0
+	github.com/danish-a1/goqueue v0.0.0-00010101000000-000000000000
+	github.com/redis/go-redis/v9 v9.11.0
+)
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
@@ -27,7 +31,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/lib/pq v1.10.9 // indirect
-	github.com/redis/go-redis/v9 v9.11.0 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect

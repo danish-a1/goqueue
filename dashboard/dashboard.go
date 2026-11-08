@@ -25,6 +25,8 @@ type Options struct {
 type server struct {
 	Options
 	mux *http.ServeMux
+	rd  *reader
+	act *actions
 }
 
 // New validates o and returns the dashboard handler.
@@ -56,30 +58,33 @@ func New(o Options) (http.Handler, error) {
 	if o.Logger == nil {
 		o.Logger = func(string, ...any) {}
 	}
-	s := &server{Options: o, mux: http.NewServeMux()}
+	s := &server{Options: o, mux: http.NewServeMux(), rd: newReader(o.Redis), act: newActions(o.Redis)}
 	s.routes()
 	return secure(s.mux), nil
 }
 
-// routes registers every route; later tasks add theirs here, wrapped in
-// s.requireSession (GET pages) and s.sameOrigin (POST actions).
+// routes registers every route. GET pages and assets require a session; the action
+// POST additionally passes the same-origin (CSRF) check.
 func (s *server) routes() {
 	b := s.BasePath
+	get := func(p string, h http.HandlerFunc) { s.mux.Handle("GET "+b+p, s.requireSession(h)) }
 	s.mux.HandleFunc("GET "+b+"/login", s.loginForm)
 	s.mux.Handle("POST "+b+"/login", s.sameOrigin(http.HandlerFunc(s.loginSubmit)))
 	s.mux.Handle("POST "+b+"/logout", s.sameOrigin(http.HandlerFunc(s.logout)))
 	s.mux.Handle("GET "+b, s.requireSession(http.RedirectHandler(b+"/", http.StatusFound)))
-	s.mux.Handle("GET "+b+"/{path...}", s.requireSession(http.HandlerFunc(s.page)))
-}
-
-// page is the authenticated catch-all; only the root exists until later tasks.
-func (s *server) page(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != s.BasePath+"/" {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte("<!doctype html><title>goqueue</title><p>goqueue dashboard</p>"))
+	get("/{$}", s.dashboardPage)
+	get("/analytics", s.analyticsPage)
+	get("/queues", s.queuesPage)
+	get("/queues/{name}", s.queuePage)
+	get("/retries", s.listPage(SourceRetry, "retries", "Retries"))
+	get("/dead", s.listPage(SourceDead, "dead", "Dead"))
+	get("/deleted", s.listPage(SourceDeleted, "deleted", "Deleted"))
+	get("/busy", s.busyPage)
+	get("/api/stats", s.apiStats)
+	get("/api/history", s.apiHistory)
+	get("/static/{file}", s.static)
+	s.mux.Handle("POST "+b+"/api/actions", s.requireSession(s.sameOrigin(http.HandlerFunc(s.apiActions))))
+	get("/{path...}", http.NotFound)
 }
 
 const minTokenLen = 32

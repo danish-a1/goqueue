@@ -1,0 +1,27 @@
+{{define "pager"}}{{if gt .Total 0}}<nav class="pager">
+{{with .PrevPage}}<a href="?{{if $.Filter}}queue={{$.Queue}}&amp;{{end}}page={{.}}&amp;per={{$.Per}}">&larr; Prev</a>{{end}}
+<span>Page {{.Page}} of {{.Pages}} ({{.Total}} jobs)</span>
+{{with .NextPage}}<a href="?{{if $.Filter}}queue={{$.Queue}}&amp;{{end}}page={{.}}&amp;per={{$.Per}}">Next &rarr;</a>{{end}}
+</nav>{{end}}{{end}}
+
+{{define "jobs"}}{{template "head" .}}
+{{if .Queue}}
+<h2>{{.Title}} <small>{{.Queue}}</small></h2>
+<nav class="sub"><a href="{{.Base}}/queues/{{pathEscape .Queue}}">Pending</a><a href="{{.Base}}/retries?queue={{.Queue}}">Retries</a><a href="{{.Base}}/dead?queue={{.Queue}}">Dead</a><a href="{{.Base}}/deleted?queue={{.Queue}}">Deleted</a></nav>
+<div class="jobs" data-queue="{{.Queue}}" data-source="{{.Source}}">
+<div class="bar">{{range actions .Source}}<button type="button" data-action="{{.}}" disabled>{{label .}}</button>{{end}}<span class="msg" role="status"></span></div>
+<div class="confirm" hidden><span></span> <button type="button" class="danger" data-confirm>Confirm</button> <button type="button" data-cancel>Cancel</button></div>
+<div class="scroll"><table><thead><tr><th><input type="checkbox" data-all aria-label="Select all"></th><th>ID</th><th>Job</th>
+<th>{{if eq .Source "retry"}}Due{{else if eq .Source "dead"}}Failed{{else if eq .Source "deleted"}}Deleted{{else}}Enqueued{{end}}</th><th>Details</th><th>Args</th></tr></thead><tbody>
+{{range .Jobs}}<tr><td><input type="checkbox" value="{{.ID}}" aria-label="Select job"></td><td><code>{{.ID}}</code></td><td>{{.JobName}}</td>
+<td class="nowrap">{{if eq $.Source "retry"}}{{tm .DueAt}}{{else if eq $.Source "dead"}}{{tm .FailedAt}}{{else if eq $.Source "deleted"}}{{tm .DeletedAt}}{{else}}{{tm .EnqueuedAt}}{{end}}</td>
+<td class="details">{{if eq $.Source "deleted"}}from {{.From}}{{with .DeletedBy}} by {{.}}{{end}}{{else}}{{if .RetryCount}}<span class="muted">attempt {{.RetryCount}}</span> {{end}}{{.Error}}{{end}}</td>
+<td><details><summary>args</summary><pre>{{args .Args}}</pre></details></td></tr>
+{{else}}<tr><td colspan="6" class="empty">No jobs.</td></tr>{{end}}
+</tbody></table></div></div>
+{{template "pager" .}}
+{{else}}
+<h2>{{.Title}}</h2><p class="muted">Pick a queue.</p>
+{{template "queueTable" .}}
+{{end}}
+{{template "foot" .}}{{end}}

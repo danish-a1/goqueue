@@ -1,0 +1,22 @@
+{{define "head"}}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>{{.Title}} - goqueue</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="{{.Base}}/static/app.css">
+<script src="{{.Base}}/static/app.js" defer></script></head>
+<body data-base="{{.Base}}" data-poll="{{.Poll}}">
+<header class="top"><a class="brand" href="{{.Base}}/">goqueue</a>
+<nav>{{range nav}}<a href="{{$.Base}}{{.Path}}"{{if eq .Tab $.Tab}} class="on" aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav>
+<form method="post" action="{{.Base}}/logout"><button type="submit">Logout</button></form></header>
+{{with .Sum}}<section class="stats" aria-label="Totals">
+<a href="{{$.Base}}/"><b data-stat="Processed">{{.Processed}}</b><span>Processed</span></a>
+<a href="{{$.Base}}/analytics"><b data-stat="Failed">{{.Failed}}</b><span>Failed</span></a>
+<a href="{{$.Base}}/busy"><b data-stat="Busy">{{.Busy}}</b><span>Busy</span></a>
+<a href="{{$.Base}}/queues"><b data-stat="Pending">{{.Pending}}</b><span>Pending</span></a>
+<a href="{{$.Base}}/retries"><b data-stat="Retry">{{.Retry}}</b><span>Retries</span></a>
+<a href="{{$.Base}}/dead"><b data-stat="Dead">{{.Dead}}</b><span>Dead</span></a>
+<a href="{{$.Base}}/deleted"><b data-stat="Deleted">{{.Deleted}}</b><span>Deleted</span></a>
+</section>{{end}}
+<main>
+{{end}}
+
+{{define "foot"}}</main></body></html>{{end}}

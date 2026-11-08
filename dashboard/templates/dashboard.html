@@ -1,0 +1,6 @@
+{{define "dashboard"}}{{template "head" .}}
+<h2>History <small>last {{.DaysSel}} days</small></h2>
+{{template "chart" .Chart}}
+<h2>Queues</h2>
+{{template "queueTable" .}}
+{{template "foot" .}}{{end}}

@@ -1,0 +1,11 @@
+{{define "busy"}}{{template "head" .}}
+<h2>Processes <small>{{len .Procs}}</small></h2>
+<div class="scroll"><table><thead><tr><th>Process</th><th>Host</th><th class="n">PID</th><th>Queue</th><th class="n">Concurrency</th><th class="n">Busy</th><th>Started</th></tr></thead><tbody>
+{{range .Procs}}<tr><td><code>{{.ID}}</code></td><td>{{.Host}}</td><td class="n">{{.PID}}</td><td>{{.Queue}}</td><td class="n">{{.Concurrency}}</td><td class="n">{{len .Busy}}</td><td class="nowrap">{{tm .StartedAt}}</td></tr>
+{{else}}<tr><td colspan="7" class="empty">No live processes.</td></tr>{{end}}
+</tbody></table></div>
+<h2>Jobs in flight</h2>
+<div class="scroll"><table><thead><tr><th>Process</th><th>Job ID</th><th>Queue</th><th>Job</th><th>Started</th></tr></thead><tbody>
+{{range $p := .Procs}}{{range .Busy}}<tr><td><code>{{$p.ID}}</code></td><td><code>{{.JobID}}</code></td><td>{{.Queue}}</td><td>{{.JobName}}</td><td class="nowrap">{{tm .StartedAt}}</td></tr>{{end}}{{end}}
+</tbody></table></div>
+{{template "foot" .}}{{end}}
