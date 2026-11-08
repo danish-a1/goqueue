@@ -2,7 +2,9 @@ package dashboard
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
@@ -32,16 +34,26 @@ func TestNew_Validation(t *testing.T) {
 	rc := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
 	defer rc.Close()
 	for name, o := range map[string]Options{
-		"empty base path":      {AccessToken: "t", Redis: rc},
-		"base path no slash":   {BasePath: "x", AccessToken: "t", Redis: rc},
-		"nil redis with token": {BasePath: "/x", AccessToken: "t"},
+		"empty base path":      {AccessToken: testToken, Redis: rc},
+		"base path no slash":   {BasePath: "x", AccessToken: testToken, Redis: rc},
+		"nil redis with token": {BasePath: "/x", AccessToken: testToken},
+		"double slash":         {BasePath: "//x", AccessToken: testToken, Redis: rc},
+		"backslash":            {BasePath: "/x\\y", AccessToken: testToken, Redis: rc},
+		"brace":                {BasePath: "/x{y}", AccessToken: testToken, Redis: rc},
+		"space":                {BasePath: "/x y", AccessToken: testToken, Redis: rc},
 	} {
 		if h, err := New(o); err == nil || h != nil {
 			t.Errorf("%s: want error and nil handler, got h=%v err=%v", name, h, err)
 		}
 	}
-	if _, err := New(Options{BasePath: "/x/", AccessToken: "t", Redis: rc}); err != nil {
+	if _, err := New(Options{BasePath: "/x/", AccessToken: testToken, Redis: rc}); err != nil {
 		t.Errorf("trailing slash must be accepted: %v", err)
+	}
+	if _, err := New(Options{BasePath: "/x", AccessToken: "short-token", Redis: rc}); err == nil {
+		t.Error("token under 32 bytes must be rejected")
+	}
+	if _, err := New(Options{BasePath: "/x", AccessToken: "  " + testToken + "\n", Redis: rc}); err != nil {
+		t.Errorf("padded token must be trimmed: %v", err)
 	}
 	if _, err := New(Options{BasePath: "/x"}); err != nil {
 		t.Errorf("no token, no redis must be accepted: %v", err)
@@ -50,7 +62,7 @@ func TestNew_Validation(t *testing.T) {
 
 func TestNew_TrailingSlashBasePathTrimmed(t *testing.T) {
 	e := newEnv(t, testToken)
-	e.h, _ = New(Options{BasePath: testBase + "/", AccessToken: testToken, Redis: redis.NewClient(&redis.Options{Addr: e.mr.Addr()})})
+	e.h, _ = New(Options{BasePath: testBase + "/", AccessToken: testToken, Redis: e.newRedis(t)})
 	w := e.do("GET", testBase+"/", nil)
 	if w.Code != http.StatusFound || w.Header().Get("Location") != testBase+"/login" {
 		t.Fatalf("got %d %q", w.Code, w.Header().Get("Location"))
@@ -73,7 +85,7 @@ func TestLoginForm_RendersWithoutSession(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d", w.Code)
 	}
-	if b := w.Body.String(); !contains(b, `name="token"`) {
+	if b := w.Body.String(); !strings.Contains(b, `name="token"`) {
 		t.Errorf("form lacks token field: %s", b)
 	}
 }
@@ -87,15 +99,25 @@ func TestPlaceholderRoot_AuthenticatedOK(t *testing.T) {
 	}
 }
 
-func contains(s, sub string) bool {
-	return len(sub) == 0 || (len(s) >= len(sub) && indexOf(s, sub) >= 0)
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
+func TestSecurityHeaders_OnEveryResponse(t *testing.T) {
+	e := newEnv(t, testToken)
+	want := map[string]string{
+		"Cache-Control":           "no-store",
+		"X-Frame-Options":         "DENY",
+		"Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'",
+		"X-Content-Type-Options":  "nosniff",
+		"Referrer-Policy":         "same-origin",
+	}
+	for _, w := range []*httptest.ResponseRecorder{
+		e.do("GET", testBase+"/login", nil),
+		e.do("GET", testBase+"/", nil),
+		e.login("bad"),
+		e.do("GET", testBase+"/nope/nope", nil),
+	} {
+		for k, v := range want {
+			if got := w.Header().Get(k); got != v {
+				t.Errorf("%d %s = %q, want %q", w.Code, k, got, v)
+			}
 		}
 	}
-	return -1
 }

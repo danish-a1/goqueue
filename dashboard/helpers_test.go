@@ -20,7 +20,7 @@ import (
 
 const (
 	testBase  = "/goqueue-ui"
-	testToken = "s3cret-token-value"
+	testToken = "s3cret-token-value-0123456789abcdef"
 	testHost  = "example.test"
 	testIP    = "203.0.113.7"
 )
@@ -105,6 +105,9 @@ func sessionCookie(w *httptest.ResponseRecorder) *http.Cookie {
 	return nil
 }
 
-func nil2(e *env) redis.UniversalClient {
-	return redis.NewClient(&redis.Options{Addr: e.mr.Addr()})
+func (e *env) newRedis(t *testing.T) redis.UniversalClient {
+	t.Helper()
+	rc := redis.NewClient(&redis.Options{Addr: e.mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	return rc
 }

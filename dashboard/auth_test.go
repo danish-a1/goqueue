@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -58,7 +59,7 @@ func TestLogin_Throttle_PerIP(t *testing.T) {
 
 func TestLogin_CustomClientIP(t *testing.T) {
 	e := newEnv(t, testToken)
-	h, err := New(Options{BasePath: testBase, AccessToken: testToken, Redis: nil2(e),
+	h, err := New(Options{BasePath: testBase, AccessToken: testToken, Redis: e.newRedis(t),
 		ClientIP: func(*http.Request) string { return "10.9.9.9" }})
 	if err != nil {
 		t.Fatal(err)
@@ -171,10 +172,14 @@ func TestLogin_NeverLogsToken(t *testing.T) {
 	ck := sessionCookie(w).Value
 	e.do("GET", testBase+"/", nil, withCookie(ck))
 	e.do("POST", testBase+"/logout", url.Values{}, sameOrigin, withCookie(ck))
-	for i := 0; i < 11; i++ {
-		e.login(wrong)
+	e.mr.Close()
+	if w := e.login(wrong); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("redis down = %d, want 503", w.Code)
 	}
 	out := e.logs.all()
+	if out == "" {
+		t.Fatal("logger never called on redis error path")
+	}
 	for _, secret := range []string{testToken, wrong} {
 		if strings.Contains(out, secret) {
 			t.Errorf("logs leak %q:\n%s", secret, out)
@@ -203,4 +208,90 @@ func flip(s string) string {
 		b[0] = 'A'
 	}
 	return string(b)
+}
+
+func TestLogin_Concurrent_AtMost10Get401(t *testing.T) {
+	e := newEnv(t, testToken)
+	var mu sync.Mutex
+	codes := map[int]int{}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c := e.login("bad").Code
+			mu.Lock()
+			codes[c]++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	if codes[401] != 10 || codes[429] != 10 {
+		t.Fatalf("codes = %v, want 10x401 and 10x429", codes)
+	}
+}
+
+func TestLogin_SuccessClearsCounter(t *testing.T) {
+	e := newEnv(t, testToken)
+	e.login("bad")
+	if w := e.login(testToken); w.Code != http.StatusSeeOther {
+		t.Fatalf("got %d", w.Code)
+	}
+	if e.mr.Exists(failKey) {
+		t.Fatal("counter not deleted on success")
+	}
+}
+
+func clientIPEnv(t *testing.T, ip string) *env {
+	e := newEnv(t, testToken)
+	h, err := New(Options{BasePath: testBase, AccessToken: testToken, Redis: e.newRedis(t),
+		ClientIP: func(*http.Request) string { return ip }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.h = h
+	return e
+}
+
+func TestLogin_ClientIPEmptyOrGarbage_FallsBackToRemoteAddr(t *testing.T) {
+	for _, ip := range []string{"", "not-an-ip"} {
+		e := clientIPEnv(t, ip)
+		e.login("bad")
+		if v, _ := e.mr.Get(failKey); v != "1" {
+			t.Errorf("ip %q: remote-addr key counter = %q", ip, v)
+		}
+	}
+}
+
+func TestLogin_IPv6MaskedTo64(t *testing.T) {
+	e := clientIPEnv(t, "2001:db8:1:2:aaaa:bbbb:cccc:dddd")
+	e.login("bad")
+	e.h, _ = New(Options{BasePath: testBase, AccessToken: testToken, Redis: e.newRedis(t),
+		ClientIP: func(*http.Request) string { return "2001:db8:1:2:1:2:3:4" }})
+	e.login("bad")
+	if v, _ := e.mr.Get("goqueue:ui:login_fail:2001:db8:1:2::"); v != "2" {
+		t.Fatalf("/64 counter = %q, keys=%v", v, e.mr.Keys())
+	}
+}
+
+func TestLogin_BadContentTypeAndOversize(t *testing.T) {
+	e := newEnv(t, testToken)
+	w := e.do("POST", testBase+"/login", url.Values{"token": {testToken}}, sameOrigin,
+		func(r *http.Request) { r.Header.Set("Content-Type", "application/json") })
+	if w.Code != http.StatusUnsupportedMediaType || sessionCookie(w) != nil {
+		t.Errorf("json = %d", w.Code)
+	}
+	big := url.Values{"token": {strings.Repeat("a", 8<<10)}}
+	if w := e.do("POST", testBase+"/login", big, sameOrigin); w.Code == http.StatusSeeOther {
+		t.Errorf("oversize body accepted")
+	}
+}
+
+func TestSession_RejectsExpiryBeyondTTL(t *testing.T) {
+	e := newEnv(t, testToken)
+	far := signCookie(testToken, time.Now().Add(100*24*time.Hour))
+	w := e.do("GET", testBase+"/", nil, withCookie(far))
+	if w.Code != http.StatusFound {
+		t.Fatalf("far-future cookie = %d, want 302", w.Code)
+	}
 }

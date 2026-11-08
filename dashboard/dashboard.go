@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -29,11 +30,16 @@ type server struct {
 // New validates o and returns the dashboard handler.
 func New(o Options) (http.Handler, error) {
 	o.BasePath = strings.TrimRight(o.BasePath, "/")
-	if o.BasePath == "" || !strings.HasPrefix(o.BasePath, "/") {
-		return nil, errors.New("dashboard: BasePath must start with \"/\"")
+	if o.BasePath == "" || !strings.HasPrefix(o.BasePath, "/") || strings.HasPrefix(o.BasePath, "//") ||
+		strings.ContainsAny(o.BasePath, "\\{}") || strings.IndexFunc(o.BasePath, unicode.IsSpace) >= 0 {
+		return nil, errors.New("dashboard: BasePath must start with a single \"/\" and contain no whitespace, backslash or braces")
 	}
+	o.AccessToken = strings.TrimSpace(o.AccessToken)
 	if o.AccessToken == "" {
-		return http.NotFoundHandler(), nil
+		return secure(http.NotFoundHandler()), nil
+	}
+	if len(o.AccessToken) < minTokenLen {
+		return nil, errors.New("dashboard: access token must be at least 32 bytes; generate with: openssl rand -hex 32")
 	}
 	if o.Redis == nil {
 		return nil, errors.New("dashboard: Redis is required when AccessToken is set")
@@ -52,7 +58,7 @@ func New(o Options) (http.Handler, error) {
 	}
 	s := &server{Options: o, mux: http.NewServeMux()}
 	s.routes()
-	return s.mux, nil
+	return secure(s.mux), nil
 }
 
 // routes registers every route; later tasks add theirs here, wrapped in
@@ -74,4 +80,19 @@ func (s *server) page(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte("<!doctype html><title>goqueue</title><p>goqueue dashboard</p>"))
+}
+
+const minTokenLen = 32
+
+// secure sets the hardening headers on every response, including errors and redirects.
+func secure(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Cache-Control", "no-store")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
 }

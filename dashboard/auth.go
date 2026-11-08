@@ -1,15 +1,16 @@
 package dashboard
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	_ "embed"
 	"encoding/base64"
 	"html/template"
+	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -29,7 +30,7 @@ var loginHTML string
 
 var loginTmpl = template.Must(template.New("login").Parse(loginHTML))
 
-var failScript = redis.NewScript(`local n=redis.call('INCR',KEYS[1])
+var attemptScript = redis.NewScript(`local n=redis.call('INCR',KEYS[1])
 if n==1 then redis.call('PEXPIRE',KEYS[1],ARGV[1]) end
 return n`)
 
@@ -53,6 +54,10 @@ func (s *server) validSession(r *http.Request) bool {
 	}
 	exp, _, ok := strings.Cut(c.Value, ".")
 	if n, err := strconv.ParseInt(exp, 10, 64); !ok || err != nil || n <= time.Now().Unix() {
+		return false
+	}
+	n, _ := strconv.ParseInt(exp, 10, 64)
+	if n > time.Now().Add(s.SessionTTL+time.Minute).Unix() {
 		return false
 	}
 	return hmac.Equal([]byte(c.Value), []byte(s.sign(exp)))
@@ -96,29 +101,51 @@ func (s *server) loginForm(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) loginSubmit(w http.ResponseWriter, r *http.Request) {
-	ctx, key := r.Context(), "goqueue:ui:login_fail:"+s.ClientIP(r)
-	if n, err := s.Redis.Get(ctx, key).Int(); err != nil && err != redis.Nil {
+	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/x-www-form-urlencoded" {
+		http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	ctx, key := r.Context(), "goqueue:ui:login_fail:"+s.throttleIP(r)
+	// Reserve the attempt before comparing so parallel guesses cannot all see a low count.
+	n, err := attemptScript.Run(ctx, s.Redis, []string{key}, loginWindow.Milliseconds()).Int()
+	if err != nil {
 		s.Logger("login throttle unavailable", "err", err)
 		s.renderLogin(w, http.StatusServiceUnavailable, "Try again later.")
 		return
-	} else if n >= loginMaxFail {
+	}
+	if n > loginMaxFail {
 		s.renderLogin(w, http.StatusTooManyRequests, "Too many attempts. Try again later.")
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(r.PostFormValue("token")), []byte(s.AccessToken)) != 1 {
-		s.recordFail(ctx, key)
+	guess, want := sha256.Sum256([]byte(r.PostFormValue("token"))), sha256.Sum256([]byte(s.AccessToken))
+	if subtle.ConstantTimeCompare(guess[:], want[:]) != 1 {
 		s.renderLogin(w, http.StatusUnauthorized, "Invalid token.")
 		return
+	}
+	if err := s.Redis.Del(ctx, key).Err(); err != nil {
+		s.Logger("login counter reset failed", "err", err)
 	}
 	exp := strconv.FormatInt(time.Now().Add(s.SessionTTL).Unix(), 10)
 	s.setCookie(w, s.sign(exp), int(s.SessionTTL.Seconds()))
 	http.Redirect(w, r, s.BasePath+"/", http.StatusSeeOther)
 }
 
-func (s *server) recordFail(ctx context.Context, key string) {
-	if err := failScript.Run(ctx, s.Redis, []string{key}, loginWindow.Milliseconds()).Err(); err != nil {
-		s.Logger("login fail counter error", "err", err)
+// throttleIP returns the client IP (IPv6 masked to /64), falling back to RemoteAddr
+// when ClientIP yields something that is not an IP.
+func (s *server) throttleIP(r *http.Request) string {
+	a, err := netip.ParseAddr(s.ClientIP(r))
+	if err != nil {
+		if a, err = netip.ParseAddr(remoteHost(r)); err != nil {
+			return "unknown"
+		}
 	}
+	a = a.Unmap()
+	if a.Is6() {
+		p, _ := a.Prefix(64)
+		return p.Masked().Addr().String()
+	}
+	return a.String()
 }
 
 func (s *server) logout(w http.ResponseWriter, r *http.Request) {
