@@ -5,6 +5,7 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"strconv"
 )
 
 // actionRequest is the POST /api/actions body.
@@ -56,11 +57,23 @@ func (s *server) apiActions(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	var req actionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	err := dec.Decode(&req)
+	if err == nil && dec.More() {
+		err = errors.New("trailing data")
+	}
+	var tooBig *http.MaxBytesError
+	switch {
+	case errors.As(err, &tooBig):
+		jsonError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	case err != nil:
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	res, err := s.act.Do(r.Context(), req.Action, req.Queue, req.Source, req.JobIDs, s.throttleIP(r))
+	ip := s.throttleIP(r)
+	res, err := s.act.Do(r.Context(), req.Action, req.Queue, req.Source, req.JobIDs, ip)
 	switch {
 	case errors.Is(err, ErrBadRequest):
 		jsonError(w, http.StatusBadRequest, err.Error())
@@ -68,6 +81,10 @@ func (s *server) apiActions(w http.ResponseWriter, r *http.Request) {
 		s.Logger("dashboard action failed", "action", req.Action, "queue", req.Queue, "done", len(res.Done), "err", err)
 		jsonError(w, http.StatusInternalServerError, "internal error")
 	default:
+		// Audit line: counts only, never job IDs or payloads. Queue is quoted so a crafted
+		// name cannot forge log lines.
+		s.Logger("dashboard action", "action", req.Action, "queue", strconv.Quote(req.Queue), "source", req.Source,
+			"done", len(res.Done), "not_found", len(res.NotFound), "ip", ip)
 		writeJSON(w, http.StatusOK, res)
 	}
 }

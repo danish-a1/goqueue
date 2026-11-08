@@ -47,7 +47,7 @@ func main() {
 	}
 	fmt.Println("dashboard: http://localhost:8080/goqueue-ui")
 	fmt.Println("token:", token)
-	srv := &http.Server{Addr: ":8080", Handler: h, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: "localhost:8080", Handler: h, ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(srv.ListenAndServe())
 }
 

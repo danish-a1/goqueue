@@ -1,3 +1,5 @@
+{{define "cur"}}{{if .}} class="on" aria-current="page"{{end}}{{end}}
+
 {{define "pager"}}{{if gt .Total 0}}<nav class="pager">
 {{with .PrevPage}}<a href="?{{if $.Filter}}queue={{$.Queue}}&amp;{{end}}page={{.}}&amp;per={{$.Per}}">&larr; Prev</a>{{end}}
 <span>Page {{.Page}} of {{.Pages}} ({{.Total}} jobs)</span>
@@ -7,7 +9,7 @@
 {{define "jobs"}}{{template "head" .}}
 {{if .Queue}}
 <h2>{{.Title}} <small>{{.Queue}}</small></h2>
-<nav class="sub"><a href="{{.Base}}/queues/{{pathEscape .Queue}}">Pending</a><a href="{{.Base}}/retries?queue={{.Queue}}">Retries</a><a href="{{.Base}}/dead?queue={{.Queue}}">Dead</a><a href="{{.Base}}/deleted?queue={{.Queue}}">Deleted</a></nav>
+<nav class="sub"><a href="{{.Base}}/queues/{{pathEscape .Queue}}"{{template "cur" (eq .Source "pending")}}>Pending</a><a href="{{.Base}}/retries?queue={{.Queue}}"{{template "cur" (eq .Source "retry")}}>Retries</a><a href="{{.Base}}/dead?queue={{.Queue}}"{{template "cur" (eq .Source "dead")}}>Dead</a><a href="{{.Base}}/deleted?queue={{.Queue}}"{{template "cur" (eq .Source "deleted")}}>Deleted</a></nav>
 <div class="jobs" data-queue="{{.Queue}}" data-source="{{.Source}}">
 <div class="bar">{{range actions .Source}}<button type="button" data-action="{{.}}" disabled>{{label .}}</button>{{end}}<span class="msg" role="status"></span></div>
 <div class="confirm" hidden><span></span> <button type="button" class="danger" data-confirm>Confirm</button> <button type="button" data-cancel>Cancel</button></div>

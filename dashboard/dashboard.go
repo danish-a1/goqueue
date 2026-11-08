@@ -69,6 +69,7 @@ func (s *server) routes() {
 	b := s.BasePath
 	get := func(p string, h http.HandlerFunc) { s.mux.Handle("GET "+b+p, s.requireSession(h)) }
 	s.mux.HandleFunc("GET "+b+"/login", s.loginForm)
+	s.mux.HandleFunc("GET "+b+"/static/login.css", s.loginCSS) // the only public asset
 	s.mux.Handle("POST "+b+"/login", s.sameOrigin(http.HandlerFunc(s.loginSubmit)))
 	s.mux.Handle("POST "+b+"/logout", s.sameOrigin(http.HandlerFunc(s.logout)))
 	s.mux.Handle("GET "+b, s.requireSession(http.RedirectHandler(b+"/", http.StatusFound)))
@@ -95,7 +96,7 @@ func secure(next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("Cache-Control", "no-store")
 		h.Set("X-Frame-Options", "DENY")
-		h.Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+		h.Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
 		next.ServeHTTP(w, r)

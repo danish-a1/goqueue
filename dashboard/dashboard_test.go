@@ -104,7 +104,7 @@ func TestSecurityHeaders_OnEveryResponse(t *testing.T) {
 	want := map[string]string{
 		"Cache-Control":           "no-store",
 		"X-Frame-Options":         "DENY",
-		"Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'",
+		"Content-Security-Policy": "default-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'; frame-ancestors 'none'",
 		"X-Content-Type-Options":  "nosniff",
 		"Referrer-Policy":         "same-origin",
 	}

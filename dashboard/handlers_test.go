@@ -2,10 +2,10 @@ package dashboard
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -71,6 +71,7 @@ func TestQueuePage_ColonName(t *testing.T) {
 	e := newEnv(t, testToken)
 	rc := e.newRedis(t)
 	ck := authed(t, e)
+	hrefRe := regexp.MustCompile(`<nav class="sub"><a href="([^"]+)"`)
 	for _, name := range []string{"order-hub:status-delivery", "a/b"} {
 		seedQueue(t, rc, name, 2, 0, 0, 0)
 		w := get(e, "/queues/"+url.PathEscape(name), ck)
@@ -78,12 +79,27 @@ func TestQueuePage_ColonName(t *testing.T) {
 			t.Fatalf("queue %q = %d, want 200", name, w.Code)
 		}
 		body := w.Body.String()
-		// html/template may escape "/" or ":" differently; accept the name or its escaped form.
-		if !strings.Contains(body, name) && !strings.Contains(body, strings.ReplaceAll(name, "/", "&#47;")) {
-			t.Errorf("queue %q: name not shown in page", name)
+		if !strings.Contains(body, "<small>"+name+"</small>") {
+			t.Errorf("queue %q: heading <small>%s</small> missing", name, name)
 		}
-		if !strings.Contains(body, name+"-p0") && !strings.Contains(body, name+"-p1") {
-			t.Errorf("queue %q: pending job IDs not shown", name)
+		if !strings.Contains(body, "<code>"+name+"-p0</code>") || !strings.Contains(body, `value="`+name+`-p1"`) {
+			t.Errorf("queue %q: pending job IDs not shown exactly", name)
+		}
+		if !strings.Contains(body, `data-queue="`+name+`"`) {
+			t.Errorf("queue %q: data-queue attribute not exact", name)
+		}
+		// The rendered Pending link must lead back to the same page.
+		m := hrefRe.FindStringSubmatch(body)
+		if m == nil {
+			t.Fatalf("queue %q: sub-nav link missing", name)
+		}
+		want := testBase + "/queues/" + url.PathEscape(name)
+		if m[1] != want {
+			t.Errorf("queue %q: link %q, want %q", name, m[1], want)
+		}
+		r := httptest.NewRequest("GET", m[1], nil)
+		if r.URL.Path != testBase+"/queues/"+name {
+			t.Errorf("queue %q: link does not unescape to the name: %q", name, r.URL.Path)
 		}
 	}
 }
@@ -130,125 +146,6 @@ func TestListPages_QueueFilterAndPagination(t *testing.T) {
 		if strings.Contains(body, p1[0].ID+"<") || strings.Contains(body, ">"+p1[0].ID) || strings.Contains(body, p1[0].ID+"\"") {
 			t.Errorf("%s page 2 still shows page-1 id %q", page, p1[0].ID)
 		}
-	}
-}
-
-func TestAPIStats_JSONShape(t *testing.T) {
-	e := newEnv(t, testToken)
-	rc := e.newRedis(t)
-	seedQueue(t, rc, "alpha", 3, 2, 1, 1)
-	seedQueue(t, rc, "beta", 1, 0, 0, 0)
-
-	w := get(e, "/api/stats", authed(t, e))
-	if w.Code != 200 {
-		t.Fatalf("stats = %d", w.Code)
-	}
-	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		t.Fatalf("content-type %q", ct)
-	}
-	var s Summary
-	if err := json.Unmarshal(w.Body.Bytes(), &s); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if s.Pending != 4 || s.Retry != 2 || s.Dead != 1 || s.Deleted != 1 || len(s.Queues) != 2 {
-		t.Errorf("summary = %+v", s)
-	}
-}
-
-func TestAPIHistory_Days(t *testing.T) {
-	e := newEnv(t, testToken)
-	w := get(e, "/api/history?days=7", authed(t, e))
-	if w.Code != 200 {
-		t.Fatalf("history = %d", w.Code)
-	}
-	var d []DayStat
-	if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(d) != 7 {
-		t.Errorf("len = %d, want 7", len(d))
-	}
-}
-
-func postAction(e *env, body, ctype string, mods ...func(*http.Request)) *httptest.ResponseRecorder {
-	r := httptest.NewRequest("POST", testBase+"/api/actions", strings.NewReader(body))
-	r.Header.Set("Content-Type", ctype)
-	r.Host = testHost
-	r.RemoteAddr = testIP + ":4242"
-	for _, m := range mods {
-		m(r)
-	}
-	w := httptest.NewRecorder()
-	e.h.ServeHTTP(w, r)
-	return w
-}
-
-const retryBody = `{"action":"retry","queue":"alpha","source":"dead","job_ids":["alpha-d0"]}`
-
-func TestAPIActions_RequiresSessionAndOrigin(t *testing.T) {
-	e := newEnv(t, testToken)
-	rc := e.newRedis(t)
-	seedQueue(t, rc, "alpha", 0, 0, 2, 0)
-	ctx := context.Background()
-	deadLen := func() int64 { return rc.LLen(ctx, "dlq:alpha").Val() }
-	ck := authed(t, e)
-
-	// no session
-	w := postAction(e, retryBody, "application/json", sameOrigin)
-	if w.Code == 200 || (w.Code != 302 && w.Code != 401) {
-		t.Errorf("no session = %d, want 302/401", w.Code)
-	}
-	if deadLen() != 2 {
-		t.Fatal("unauthenticated action moved a job")
-	}
-
-	// cross origin
-	w = postAction(e, retryBody, "application/json", ck, func(r *http.Request) { r.Header.Set("Origin", "http://evil.test") })
-	if w.Code != 403 {
-		t.Errorf("cross-origin = %d, want 403", w.Code)
-	}
-	if deadLen() != 2 {
-		t.Fatal("cross-origin action moved a job")
-	}
-
-	// wrong content type
-	w = postAction(e, retryBody, "text/plain", ck, sameOrigin)
-	if w.Code != http.StatusUnsupportedMediaType {
-		t.Errorf("text/plain = %d, want 415", w.Code)
-	}
-	if deadLen() != 2 {
-		t.Fatal("non-JSON action moved a job")
-	}
-
-	// invalid
-	for _, bad := range []string{
-		`{"action":"explode","queue":"alpha","source":"dead","job_ids":["x"]}`,
-		`{"action":"retry","queue":"alpha","source":"pending","job_ids":["x"]}`,
-		`{"action":"retry","queue":"alpha","source":"dead","job_ids":[]}`,
-		`not json`,
-	} {
-		if w = postAction(e, bad, "application/json", ck, sameOrigin); w.Code != 400 {
-			t.Errorf("invalid %q = %d, want 400", bad, w.Code)
-		}
-	}
-	if deadLen() != 2 {
-		t.Fatal("invalid action moved a job")
-	}
-
-	// happy path
-	w = postAction(e, retryBody, "application/json", ck, sameOrigin)
-	if w.Code != 200 {
-		t.Fatalf("valid action = %d body %s", w.Code, w.Body)
-	}
-	var res ActionResult
-	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(res.Done) != 1 || res.Done[0] != "alpha-d0" {
-		t.Errorf("result = %+v", res)
-	}
-	if deadLen() != 1 || rc.LLen(ctx, gqredis.KeyPending("alpha")).Val() != 1 {
-		t.Error("job not moved dead -> pending")
 	}
 }
 

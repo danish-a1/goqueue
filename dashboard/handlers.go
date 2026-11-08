@@ -84,9 +84,14 @@ func (s *server) jobsPage(w http.ResponseWriter, r *http.Request, v view, queue 
 			http.NotFound(w, r)
 			return
 		}
-		v.Page, v.Per = intParam(r, "page", 1), min(intParam(r, "per", 25), 100)
+		v.Page, v.Per = clamp(intParam(r, "page", 1), 1, 1_000_000), min(intParam(r, "per", 25), 100)
 		var err error
-		if v.Jobs, v.Total, err = s.rd.Jobs(r.Context(), queue, src, v.Page, v.Per); err != nil {
+		v.Jobs, v.Total, err = s.rd.Jobs(r.Context(), queue, src, v.Page, v.Per)
+		if last := int(v.Pages()); err == nil && v.Total > 0 && v.Page > last {
+			v.Page = last // past the end: show the last page so pager and rows agree
+			v.Jobs, v.Total, err = s.rd.Jobs(r.Context(), queue, src, v.Page, v.Per)
+		}
+		if err != nil {
 			s.fail(w, "page", err)
 			return
 		}
@@ -110,6 +115,13 @@ func (s *server) busyPage(w http.ResponseWriter, r *http.Request) {
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeFileFS(w, r, staticFS, r.PathValue("file"))
+}
+
+// loginCSS serves the login stylesheet without a session; the login page cannot inline
+// it under the CSP. Every other asset stays behind requireSession.
+func (s *server) loginCSS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	http.ServeFileFS(w, r, staticFS, "login.css")
 }
 
 // fail logs the error (never request bodies or job payloads) and returns a bare 500.

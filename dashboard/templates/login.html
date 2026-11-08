@@ -1,10 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>goqueue - sign in</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>body{font:15px system-ui,sans-serif;background:#f4f4f6;display:flex;justify-content:center;padding-top:15vh}
-form{background:#fff;padding:2rem;border-radius:6px;box-shadow:0 1px 4px #0002;width:320px}
-h1{font-size:1.2rem;margin:0 0 1rem}input,button{width:100%;box-sizing:border-box;padding:.6rem;margin-top:.6rem;font:inherit}
-button{background:#b1003e;color:#fff;border:0;border-radius:4px;cursor:pointer}.err{color:#b1003e;margin:.6rem 0 0}</style></head>
+<link rel="stylesheet" href="{{.BasePath}}/static/login.css"></head>
 <body><form method="post" action="{{.BasePath}}/login">
 <h1>goqueue</h1>
 <input type="password" name="token" placeholder="Access token" autocomplete="current-password" autofocus required>

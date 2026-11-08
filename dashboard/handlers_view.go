@@ -132,16 +132,16 @@ func fmtTime(t time.Time) string {
 }
 
 // prettyArgs indents the job payload for display; html/template escapes the result.
+// Payloads over maxArgsShown are cut raw (not indented) so a huge job costs no extra work.
 func prettyArgs(raw json.RawMessage) string {
+	if len(raw) > maxArgsShown {
+		return strings.ToValidUTF8(string(raw[:maxArgsShown]), "") + "..."
+	}
 	var b bytes.Buffer
-	s := string(raw)
-	if json.Indent(&b, raw, "", "  ") == nil {
-		s = b.String()
+	if json.Indent(&b, raw, "", "  ") != nil {
+		return string(raw)
 	}
-	if len(s) > maxArgsShown {
-		s = strings.ToValidUTF8(s[:maxArgsShown], "") + "\n... (truncated)"
-	}
-	return s
+	return b.String()
 }
 
 // render executes into a buffer first so a template error never sends half a page.
