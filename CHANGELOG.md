@@ -13,11 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- TBD
+- DLQ entries (Redis) now share one shape (`dlq.Entry`): field `queue_name` is renamed `queue`, `job_name` is added, and the error is capped at 256 bytes. `dlq.DecodeEntry` still reads legacy `queue_name`.
+- `RedisDLQ.Push` now uses `RPUSH` (newest entry at the tail instead of the head), keeps at most 1000 entries per queue and expires the list after 30 days.
+- Retry envelopes carry `error_message` and `failed_at` (last failed attempt); `Pop` exposes it as `JobContext.LastError`. Old envelopes without these fields still decode.
 
 ### Fixed
 
-- TBD
+- `<queue>:metrics:ack` no longer grows without bound: `DequeueMetrics` uses `BRPOP` instead of `BRPOPLPUSH` and never wrote an ack for metrics. `MetricsAckQueueSuffix` is deprecated. Clean up existing lists with: `redis-cli --scan --pattern '*:metrics:ack' | xargs redis-cli del`.
 
 ## [0.2.9] - 2026-10-23
 

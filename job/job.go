@@ -31,6 +31,8 @@ type JobContext struct {
 	Timeout time.Duration
 	// RetryCount is the number of times this job has been retried
 	RetryCount int
+	// LastError is the error message of the previous failed attempt (empty on first run)
+	LastError string
 }
 
 // SetTimeout sets the timeout for this job context.
@@ -64,4 +66,8 @@ type RedisQueuedJob struct {
 	EnqueuedAt time.Time `json:"enqueued_at"`
 	// RetryCount tracks how many times this job has been retried
 	RetryCount int `json:"retry_count"`
+	// ErrorMessage is the (truncated) error of the last failed attempt, set on retry
+	ErrorMessage string `json:"error_message,omitempty"`
+	// FailedAt is when the last attempt failed, set on retry
+	FailedAt *time.Time `json:"failed_at,omitempty"`
 }

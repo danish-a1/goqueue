@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/danish-a1/goqueue/internal/logger"
 	"github.com/danish-a1/goqueue/job"
+	"github.com/redis/go-redis/v9"
 )
 
 const dlqPrefix = "dlq:"
@@ -18,14 +17,6 @@ type RedisDLQ struct {
 	logger logger.Logger
 }
 
-type dlqEntry struct {
-	Job       json.RawMessage `json:"job"`
-	JobID     string          `json:"job_id"`
-	QueueName string          `json:"queue_name"`
-	Error     string          `json:"error"`
-	FailedAt  time.Time       `json:"failed_at"`
-}
-
 func NewRedisDLQ(client *redis.Client, logger logger.Logger) *RedisDLQ {
 	return &RedisDLQ{
 		client: client,
@@ -33,40 +24,34 @@ func NewRedisDLQ(client *redis.Client, logger logger.Logger) *RedisDLQ {
 	}
 }
 
+// DLQKey returns the Redis list key holding dead jobs of queueName.
+func (r *RedisDLQ) DLQKey(queueName string) string { return dlqPrefix + queueName }
+
+// Push appends the dead job at the tail (newest last), keeps the newest
+// MaxEntries and refreshes the list TTL.
 func (r *RedisDLQ) Push(ctx context.Context, job *job.JobContext, jobErr error) error {
-	// Serialize the job
-	jobData, err := json.Marshal(job.Job)
+	entry, err := NewEntry(job, jobErr)
 	if err != nil {
-		r.logger.Error("Failed to marshal job for DLQ", "error", err)
-		return fmt.Errorf("failed to marshal job for DLQ: %w", err)
+		r.logger.Error("Failed to build DLQ entry", "error", err)
+		return err
 	}
 
-	errMsg := ""
-	if jobErr != nil {
-		errMsg = jobErr.Error()
-	}
-
-	// Create DLQ entry
-	entry := dlqEntry{
-		Job:       jobData,
-		JobID:     job.JobID,
-		QueueName: job.QueueName,
-		Error:     errMsg,
-		FailedAt:  time.Now(),
-	}
-
-	// Serialize the entry
 	entryData, err := json.Marshal(entry)
 	if err != nil {
 		r.logger.Error("Failed to marshal DLQ entry", "error", err)
 		return fmt.Errorf("failed to marshal DLQ entry: %w", err)
 	}
 
-	// Push to Redis DLQ list
-	dlqKey := dlqPrefix + job.QueueName
-	if err := r.client.LPush(ctx, dlqKey, entryData).Err(); err != nil {
+	dlqKey := r.DLQKey(job.QueueName)
+	if err := r.client.RPush(ctx, dlqKey, entryData).Err(); err != nil {
 		r.logger.Error("Failed to push to DLQ", "error", err)
 		return fmt.Errorf("failed to push to DLQ: %w", err)
+	}
+	if err := r.client.LTrim(ctx, dlqKey, -MaxEntries, -1).Err(); err != nil {
+		r.logger.Error("Failed to trim DLQ", "error", err, "queue", job.QueueName)
+	}
+	if err := r.client.Expire(ctx, dlqKey, EntryTTL).Err(); err != nil {
+		r.logger.Error("Failed to set DLQ TTL", "error", err, "queue", job.QueueName)
 	}
 
 	r.logger.Info("Job pushed to DLQ", "jobID", job.JobID, "queue", job.QueueName)

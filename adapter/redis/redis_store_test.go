@@ -2,17 +2,20 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 	"github.com/danish-a1/goqueue/config"
 	"github.com/danish-a1/goqueue/internal/logger"
 	"github.com/danish-a1/goqueue/internal/manager"
 	"github.com/danish-a1/goqueue/internal/registry"
 	"github.com/danish-a1/goqueue/job"
+	"github.com/redis/go-redis/v9"
 )
 
 // TestJob is a simple job implementation for testing
@@ -237,7 +240,7 @@ func TestEnqueueDequeueMetrics(t *testing.T) {
 		t.Fatalf("EnqueueMetrics error: %v", err)
 	}
 
-	// Dequeue metrics; DequeueMetrics uses BRPopLPush which will move item to ack queue
+	// Dequeue metrics; DequeueMetrics pops the item without an ack list
 	got, err := store.DequeueMetrics(queueName)
 	if err != nil {
 		t.Fatalf("DequeueMetrics error: %v", err)
@@ -339,5 +342,108 @@ func TestPushBatchWithMarshalError(t *testing.T) {
 	}
 	if hlen != 1 {
 		t.Fatalf("Expected 1 job in index, got %d", hlen)
+	}
+}
+
+func newMetricsTestStore(t *testing.T) (*miniredis.Miniredis, *RedisStore) {
+	t.Helper()
+	miniRedis, client := setupTestRedis(t)
+	t.Cleanup(miniRedis.Close)
+	testLogger := logger.NewZapLogger()
+	redisManager := manager.NewRedisClientManager(miniRedis.Addr(), "", "", 0, testLogger)
+	cfg := config.NewRedisConfig(miniRedis.Addr(), "", "", 0)
+	return miniRedis, NewRedisStore(client, cfg, redisManager, miniRedis.Addr(), 0, testLogger)
+}
+
+func TestDequeueMetrics_DoesNotGrowAckList(t *testing.T) {
+	miniRedis, store := newMetricsTestStore(t)
+	q := "q"
+
+	for i := 0; i < 3; i++ {
+		m := config.JobMetrics{QueueName: q, JobID: fmt.Sprintf("m%d", i), Timestamp: time.Now()}
+		if err := store.EnqueueMetrics(m); err != nil {
+			t.Fatalf("EnqueueMetrics error: %v", err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		got, err := store.DequeueMetrics(q)
+		if err != nil {
+			t.Fatalf("DequeueMetrics error: %v", err)
+		}
+		// EnqueueMetrics LPUSHes, dequeue pops the tail: FIFO.
+		if want := fmt.Sprintf("m%d", i); got.JobID != want || got.QueueName != q {
+			t.Fatalf("dequeue %d: want JobID %s, got %+v", i, want, got)
+		}
+	}
+	if miniRedis.Exists(q + ":metrics:ack") {
+		t.Error("metrics ack list must not exist after DequeueMetrics")
+	}
+}
+
+func TestRetryJobWithMetadata_StoresLastError(t *testing.T) {
+	miniRedis, store := newMetricsTestStore(t)
+	if _, ok := registry.GetFromRegistery("TestJob"); !ok {
+		registry.Register("TestJob", func() job.Job { return &TestJob{} })
+	}
+	q := "retry_last_error_q"
+	if err := store.Push(q, &TestJob{ID: "r1", Data: "d"}); err != nil {
+		t.Fatalf("Push error: %v", err)
+	}
+	jc, err := store.Pop(q)
+	if err != nil {
+		t.Fatalf("Pop error: %v", err)
+	}
+	// 300 bytes: 'a' * 255 then 3-byte rune straddling the 256 cut.
+	long := strings.Repeat("a", 255) + strings.Repeat("€", 15)
+	jc.LastError = long
+
+	if err := store.RetryJobWithMetadata(q, jc, time.Hour); err != nil {
+		t.Fatalf("RetryJobWithMetadata error: %v", err)
+	}
+
+	members, err := miniRedis.ZMembers("retry:" + q)
+	if err != nil || len(members) != 1 {
+		t.Fatalf("expected 1 retry member, got %v (err %v)", members, err)
+	}
+	var queued job.RedisQueuedJob
+	if err := json.Unmarshal([]byte(members[0]), &queued); err != nil {
+		t.Fatalf("decode retry member: %v", err)
+	}
+	if queued.ErrorMessage == "" || len(queued.ErrorMessage) > 256 || !utf8.ValidString(queued.ErrorMessage) {
+		t.Errorf("ErrorMessage not truncated safely: len=%d valid=%v", len(queued.ErrorMessage), utf8.ValidString(queued.ErrorMessage))
+	}
+	if queued.FailedAt == nil {
+		t.Error("FailedAt must be set")
+	}
+	if got := miniRedis.HGet(fmt.Sprintf(JobIndexKeyFormat, q), jc.JobID); got != members[0] {
+		t.Errorf("job_index payload differs from retry member:\n index=%s\n member=%s", got, members[0])
+	}
+}
+
+func TestPop_CarriesErrorMessageIntoLastError(t *testing.T) {
+	miniRedis, store := newMetricsTestStore(t)
+	if _, ok := registry.GetFromRegistery("TestJob"); !ok {
+		registry.Register("TestJob", func() job.Job { return &TestJob{} })
+	}
+	q := "pop_last_error_q"
+	withErr := `{"job":{"id":"a","data":"b"},"id":"j1","job_name":"TestJob","enqueued_at":"2026-01-01T00:00:00Z","retry_count":1,"error_message":"boom","failed_at":"2026-01-01T00:00:01Z"}`
+	miniRedis.Lpush(q, withErr)
+	jc, err := store.Pop(q)
+	if err != nil {
+		t.Fatalf("Pop error: %v", err)
+	}
+	if jc.LastError != "boom" {
+		t.Errorf("LastError = %q, want boom", jc.LastError)
+	}
+
+	// Legacy envelope without the new fields still decodes.
+	legacy := `{"job":{"id":"a","data":"b"},"id":"j2","job_name":"TestJob","enqueued_at":"2026-01-01T00:00:00Z","retry_count":0}`
+	miniRedis.Lpush(q, legacy)
+	jc, err = store.Pop(q)
+	if err != nil {
+		t.Fatalf("Pop legacy error: %v", err)
+	}
+	if jc.JobID != "j2" || jc.LastError != "" {
+		t.Errorf("legacy envelope: %+v", jc)
 	}
 }

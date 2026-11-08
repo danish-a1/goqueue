@@ -2,6 +2,7 @@ package utils
 
 import (
 	"reflect"
+	"unicode/utf8"
 
 	"github.com/danish-a1/goqueue/job"
 	"github.com/google/uuid"
@@ -22,4 +23,15 @@ func GetJobName(jb job.Job) string {
 		t = t.Elem()
 	}
 	return t.Name()
+}
+
+// TruncateUTF8 cuts s to at most n bytes without splitting a multibyte rune.
+func TruncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }

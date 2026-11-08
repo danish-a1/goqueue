@@ -302,6 +302,7 @@ func (w *Worker) processJobSafely(ctx context.Context, workerID int, job job.Job
 			delay = retryDelay * time.Duration(1<<uint(job.RetryCount+attempt-1))
 		}
 
+		job.LastError = lastErr.Error()
 		if err := w.store.RetryJobWithMetadata(w.queueName, job, delay); err != nil {
 			w.logger.Error("Fallback retry failed", "workerID", workerID, "jobID", job.JobID, "error", err)
 		}

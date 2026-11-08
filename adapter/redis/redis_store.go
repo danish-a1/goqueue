@@ -7,19 +7,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/danish-a1/goqueue/adapter/dlq"
 	"github.com/danish-a1/goqueue/adapter/utils"
 	"github.com/danish-a1/goqueue/config"
 	"github.com/danish-a1/goqueue/internal/logger"
 	"github.com/danish-a1/goqueue/internal/manager"
 	"github.com/danish-a1/goqueue/internal/registry"
 	"github.com/danish-a1/goqueue/job"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
-	processingQueueName   = "processing:"
-	retryQueuePrefix      = "retry:"
-	MetricsQueueSuffix    = ":metrics"
+	processingQueueName = "processing:"
+	retryQueuePrefix    = "retry:"
+	MetricsQueueSuffix  = ":metrics"
+	// Deprecated: no longer written.
 	MetricsAckQueueSuffix = ":metrics:ack"
 	JobIndexKeyFormat     = "job_index:%s"
 	retryPollerInterval   = 1 * time.Second
@@ -223,7 +225,7 @@ func (rs *RedisStore) Pop(queueName string) (job.JobContext, error) {
 		return job.JobContext{}, fmt.Errorf("failed to decode job into type %s: %w", queued.JobName, err)
 	}
 
-	return job.JobContext{Job: jobInstance, JobID: queued.ID, QueueName: queueName, EnqueuedAt: queued.EnqueuedAt, RetryCount: queued.RetryCount}, nil
+	return job.JobContext{Job: jobInstance, JobID: queued.ID, QueueName: queueName, EnqueuedAt: queued.EnqueuedAt, RetryCount: queued.RetryCount, LastError: queued.ErrorMessage}, nil
 }
 
 func (rs *RedisStore) Ack(queueName string, jobID string) error {
@@ -276,13 +278,18 @@ func (rs *RedisStore) RetryJobWithMetadata(queueName string, queuedJob job.JobCo
 		return fmt.Errorf("failed to marshal job for retry: %w", err)
 	}
 
-	// Create RedisQueuedJob with incremented retry count
+	// Create RedisQueuedJob with incremented retry count and the last error
+	now := time.Now()
 	meta := job.RedisQueuedJob{
 		Job:        jobPayload,
 		JobName:    jobName,
 		ID:         queuedJob.JobID,
 		EnqueuedAt: queuedJob.EnqueuedAt,
 		RetryCount: queuedJob.RetryCount + 1,
+	}
+	if queuedJob.LastError != "" {
+		meta.ErrorMessage = utils.TruncateUTF8(queuedJob.LastError, dlq.MaxErrorLen)
+		meta.FailedAt = &now
 	}
 
 	// Serialize the job with updated metadata
@@ -434,19 +441,20 @@ func (r *RedisStore) EnqueueMetrics(metrics config.JobMetrics) error {
 
 func (rs *RedisStore) DequeueMetrics(queueName string) (config.JobMetrics, error) {
 	ctx := context.Background()
-	processingQueue := queueName + MetricsAckQueueSuffix
 	sourceQueueName := queueName + MetricsQueueSuffix
 
 	// Use a timeout of 1 second to make this non-blocking like the memory store
-	// BRPopLPush blocks until a job is available or context timeout
-	payload, err := rs.client.BRPopLPush(ctx, sourceQueueName, processingQueue, 1*time.Second).Result()
+	// BRPop blocks until a metric is available or the timeout; metrics are
+	// fire-and-forget so there is no ack list.
+	res, err := rs.client.BRPop(ctx, 1*time.Second, sourceQueueName).Result()
 	if err == redis.Nil {
 		return config.JobMetrics{}, nil
 	}
 	if err != nil {
-		rs.logger.Error("redis BRPopLPush error (metrics)", "error", err, "queue", queueName)
-		return config.JobMetrics{}, fmt.Errorf("redis BRPopLPush error: %w", err)
+		rs.logger.Error("redis BRPop error (metrics)", "error", err, "queue", queueName)
+		return config.JobMetrics{}, fmt.Errorf("redis BRPop error: %w", err)
 	}
+	payload := res[1]
 
 	var metrics config.JobMetrics
 	if err := json.Unmarshal([]byte(payload), &metrics); err != nil {
