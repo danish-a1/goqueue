@@ -1,8 +1,11 @@
 package dashboard
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
+	"slices"
 	"strconv"
 	"time"
 
@@ -72,7 +75,7 @@ func (r *reader) Summary(ctx context.Context) (Summary, error) {
 	}
 	cs := make([]cmds, len(names))
 	var total, totalFail *redis.StringCmd
-	_, err = r.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+	cmders, err := r.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
 		total, totalFail = p.Get(ctx, gqredis.KeyStatProcessed), p.Get(ctx, gqredis.KeyStatFailed)
 		for i, n := range names {
 			c := &cs[i]
@@ -87,7 +90,7 @@ func (r *reader) Summary(ctx context.Context) (Summary, error) {
 		}
 		return nil
 	})
-	if err != nil && err != redis.Nil {
+	if err := pipeErr(cmders, err); err != nil {
 		return Summary{}, err
 	}
 	procs, err := r.Processes(ctx)
@@ -124,6 +127,22 @@ func (r *reader) Summary(ctx context.Context) (Summary, error) {
 	return s, nil
 }
 
+// pipeErr returns the first real command error; redis.Nil (missing counter) is expected.
+func pipeErr(cmds []redis.Cmder, err error) error {
+	if err == nil {
+		return nil
+	}
+	for _, c := range cmds {
+		if e := c.Err(); e != nil && !errors.Is(e, redis.Nil) {
+			return e
+		}
+	}
+	if errors.Is(err, redis.Nil) {
+		return nil
+	}
+	return err
+}
+
 func intCmd(c *redis.Cmd) (int64, error) {
 	s, err := c.Text()
 	if err != nil {
@@ -138,7 +157,7 @@ func (r *reader) History(ctx context.Context, days int) ([]DayStat, error) {
 	now := time.Now().UTC()
 	out := make([]DayStat, days)
 	proc, fail := make([]*redis.StringCmd, days), make([]*redis.StringCmd, days)
-	_, err := r.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+	cmders, err := r.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
 		for i := range out {
 			d := now.AddDate(0, 0, i-days+1)
 			out[i].Day = d.Format("2006-01-02")
@@ -147,7 +166,7 @@ func (r *reader) History(ctx context.Context, days int) ([]DayStat, error) {
 		}
 		return nil
 	})
-	if err != nil && err != redis.Nil {
+	if err := pipeErr(cmders, err); err != nil {
 		return nil, err
 	}
 	for i := range out {
@@ -189,6 +208,9 @@ func (r *reader) Processes(ctx context.Context) ([]Process, error) {
 			Busy: busyJobs(ws[i].Val()),
 		})
 	}
+	slices.SortFunc(out, func(a, b Process) int {
+		return cmp.Or(a.StartedAt.Compare(b.StartedAt), cmp.Compare(a.ID, b.ID))
+	})
 	if len(dead) > 0 {
 		r.rdb.SRem(ctx, gqredis.KeyProcesses, dead...)
 	}
@@ -208,5 +230,8 @@ func busyJobs(work map[string]string) []BusyJob {
 		}
 		out = append(out, BusyJob{JobID: id, Queue: w.Queue, JobName: w.JobName, StartedAt: unixTime(w.StartedAt)})
 	}
+	slices.SortFunc(out, func(a, b BusyJob) int {
+		return cmp.Or(a.StartedAt.Compare(b.StartedAt), cmp.Compare(a.JobID, b.JobID))
+	})
 	return out
 }

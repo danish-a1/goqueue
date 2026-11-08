@@ -38,7 +38,7 @@ func queuedJob(t *testing.T, id, name string, retry int) string {
 	})
 }
 
-func seedQueue(t *testing.T, mr *miniredis.Miniredis, rc redis.UniversalClient, q string, pending, retry, dead, deleted int) {
+func seedQueue(t *testing.T, rc redis.UniversalClient, q string, pending, retry, dead, deleted int) {
 	t.Helper()
 	ctx := context.Background()
 	deadKey := "dlq:" + q
@@ -79,10 +79,10 @@ func seedProcess(t *testing.T, rc redis.UniversalClient, id string, work map[str
 }
 
 func TestSummary_CountsPerQueue(t *testing.T) {
-	r, mr, rc := newTestReader(t)
+	r, _, rc := newTestReader(t)
 	ctx := context.Background()
-	seedQueue(t, mr, rc, "a", 3, 2, 4, 1)
-	seedQueue(t, mr, rc, "b", 5, 1, 0, 2)
+	seedQueue(t, rc, "a", 3, 2, 4, 1)
+	seedQueue(t, rc, "b", 5, 1, 0, 2)
 	seedProcess(t, rc, "p1", map[string]string{"j1": "a", "j2": "a", "j3": "b"})
 	rc.Set(ctx, gqredis.KeyStatProcessed, 100, 0)
 	rc.Set(ctx, gqredis.KeyStatFailed, 7, 0)
@@ -152,8 +152,8 @@ func TestHistory_ClampsAndOrders(t *testing.T) {
 }
 
 func TestJobs_Pagination(t *testing.T) {
-	r, mr, rc := newTestReader(t)
-	seedQueue(t, mr, rc, "a", 60, 0, 0, 0)
+	r, _, rc := newTestReader(t)
+	seedQueue(t, rc, "a", 60, 0, 0, 0)
 	ctx := context.Background()
 
 	rows, total, err := r.Jobs(ctx, "a", "pending", 3, 25)
@@ -180,8 +180,8 @@ func TestJobs_Pagination(t *testing.T) {
 }
 
 func TestJobs_RetryOrderedByDue(t *testing.T) {
-	r, mr, rc := newTestReader(t)
-	seedQueue(t, mr, rc, "a", 0, 3, 0, 0)
+	r, _, rc := newTestReader(t)
+	seedQueue(t, rc, "a", 0, 3, 0, 0)
 	rows, total, err := r.Jobs(context.Background(), "a", "retry", 1, 25)
 	if err != nil || total != 3 || len(rows) != 3 {
 		t.Fatalf("rows=%d total=%d err=%v", len(rows), total, err)
@@ -192,8 +192,8 @@ func TestJobs_RetryOrderedByDue(t *testing.T) {
 }
 
 func TestJobs_DeadAndDeleted(t *testing.T) {
-	r, mr, rc := newTestReader(t)
-	seedQueue(t, mr, rc, "a", 0, 0, 3, 2)
+	r, _, rc := newTestReader(t)
+	seedQueue(t, rc, "a", 0, 0, 3, 2)
 	ctx := context.Background()
 
 	rows, total, err := r.Jobs(ctx, "a", "dead", 1, 2)
@@ -251,11 +251,10 @@ func TestJobs_DeadLegacyEntries(t *testing.T) {
 }
 
 func TestProcesses_PrunesDead(t *testing.T) {
-	r, mr, rc := newTestReader(t)
+	r, _, rc := newTestReader(t)
 	ctx := context.Background()
 	seedProcess(t, rc, "live", map[string]string{"j1": "a"})
 	rc.SAdd(ctx, gqredis.KeyProcesses, "ghost") // hash expired / never existed
-	_ = mr
 
 	ps, err := r.Processes(ctx)
 	if err != nil {
@@ -276,9 +275,9 @@ func TestProcesses_PrunesDead(t *testing.T) {
 }
 
 func TestSummary_30Queues_Under50ms(t *testing.T) {
-	r, mr, rc := newTestReader(t)
+	r, _, rc := newTestReader(t)
 	for i := 0; i < 30; i++ {
-		seedQueue(t, mr, rc, fmt.Sprintf("q%02d", i), 5, 2, 2, 1)
+		seedQueue(t, rc, fmt.Sprintf("q%02d", i), 5, 2, 2, 1)
 	}
 	best := time.Hour
 	for i := 0; i < 3; i++ {
@@ -296,5 +295,84 @@ func TestSummary_30Queues_Under50ms(t *testing.T) {
 	}
 	if best >= 50*time.Millisecond {
 		t.Errorf("best Summary = %v, want < 50ms", best)
+	}
+}
+
+func TestJobs_MalformedMembersSkipped(t *testing.T) {
+	r, _, rc := newTestReader(t)
+	ctx := context.Background()
+	seedQueue(t, rc, "a", 1, 1, 1, 1)
+	rc.LPush(ctx, "a", "{not json")
+	rc.ZAdd(ctx, gqredis.KeyRetry("a"), redis.Z{Score: 5, Member: "garbage"})
+	rc.RPush(ctx, "dlq:a", "garbage")
+	d := gqredis.KeyDeleted("a")
+	rc.RPush(ctx, d, "garbage")
+	rc.RPush(ctx, d, `{"job_id":"nx","queue":"a","from":"retry","entry":"zzz","deleted_at":"not-a-time"}`)
+	rc.RPush(ctx, d, `{"job_id":"ne","queue":"a","deleted_at":{"x":1}}`)
+	for src, c := range map[Source]struct {
+		total int64
+		good  string
+	}{"pending": {2, "a-p0"}, "retry": {2, "a-r0"}, "dead": {2, "a-d0"}, "deleted": {4, "a-x0"}} {
+		rows, total, err := r.Jobs(ctx, "a", src, 1, 25)
+		if err != nil || total != c.total {
+			t.Fatalf("%s: err=%v total=%d, want %d", src, err, total, c.total)
+		}
+		found := false
+		for _, row := range rows {
+			found = found || row.ID == c.good
+		}
+		if !found {
+			t.Errorf("%s: good row %s missing in %+v", src, c.good, rows)
+		}
+	}
+	rows, _, _ := r.Jobs(ctx, "a", "deleted", 1, 25)
+	if len(rows) != 3 || rows[0].ID != "ne" || rows[1].ID != "nx" || !rows[1].DeletedAt.IsZero() {
+		t.Errorf("deleted rows = %+v", rows)
+	}
+}
+
+func TestJobs_HugePageClamped(t *testing.T) {
+	r, _, rc := newTestReader(t)
+	seedQueue(t, rc, "a", 3, 0, 3, 0)
+	for _, src := range []Source{"pending", "dead"} {
+		rows, total, err := r.Jobs(context.Background(), "a", src, 1<<62, 100)
+		if err != nil || total != 3 || len(rows) != 0 {
+			t.Errorf("%s: rows=%d total=%d err=%v", src, len(rows), total, err)
+		}
+	}
+}
+
+func TestSummary_IgnoresPrunedWorkHash(t *testing.T) {
+	r, _, rc := newTestReader(t)
+	ctx := context.Background()
+	seedQueue(t, rc, "a", 0, 0, 0, 0)
+	seedProcess(t, rc, "live", map[string]string{"j1": "a"})
+	rc.SAdd(ctx, gqredis.KeyProcesses, "ghost")
+	rc.HSet(ctx, gqredis.KeyProcessWork("ghost"), "jg", `{"queue":"a","job_name":"Job","started_at":"1"}`)
+	s, err := r.Summary(ctx)
+	if err != nil || s.Busy != 1 || s.Queues[0].Busy != 1 || s.Processes != 1 {
+		t.Errorf("err=%v summary=%+v", err, s)
+	}
+}
+
+func TestProcesses_DeterministicOrder(t *testing.T) {
+	r, _, rc := newTestReader(t)
+	ctx := context.Background()
+	for _, id := range []string{"p3", "p1", "p2"} {
+		seedProcess(t, rc, id, nil)
+		rc.HSet(ctx, gqredis.KeyProcess(id), "started_at", 100)
+	}
+	rc.HSet(ctx, gqredis.KeyProcess("p3"), "started_at", 50)
+	for _, j := range []string{"z", "b", "a"} {
+		rc.HSet(ctx, gqredis.KeyProcessWork("p1"), j, `{"queue":"a","job_name":"J","started_at":"10"}`)
+	}
+	for range 5 {
+		ps, err := r.Processes(ctx)
+		if err != nil || len(ps) != 3 || ps[0].ID != "p3" || ps[1].ID != "p1" || ps[2].ID != "p2" {
+			t.Fatalf("order = %+v err=%v", ps, err)
+		}
+		if b := ps[1].Busy; b[0].JobID != "a" || b[1].JobID != "b" || b[2].JobID != "z" {
+			t.Fatalf("busy order = %+v", b)
+		}
 	}
 }

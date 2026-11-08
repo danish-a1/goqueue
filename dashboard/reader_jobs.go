@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -37,10 +38,10 @@ type JobRow struct {
 // Retry is ordered by due time ascending. Malformed members are skipped.
 func (r *reader) Jobs(ctx context.Context, queue string, src Source, page, per int) ([]JobRow, int64, error) {
 	per = clamp(per, 1, 100)
-	start := int64(max(page, 1)-1) * int64(per)
+	start := int64(clamp(page, 1, 1_000_000)-1) * int64(per)
 	end := start + int64(per) - 1
 	deadKey, err := r.rdb.HGet(ctx, gqredis.KeyQueues, queue).Result()
-	if err == redis.Nil {
+	if errors.Is(err, redis.Nil) {
 		return nil, 0, fmt.Errorf("unknown queue %q", queue)
 	}
 	if err != nil {
@@ -145,7 +146,7 @@ func deletedRow(raw, queue string) (JobRow, bool) {
 		JobID     string          `json:"job_id"`
 		Queue     string          `json:"queue"`
 		From      string          `json:"from"`
-		DeletedAt time.Time       `json:"deleted_at"`
+		DeletedAt json.RawMessage `json:"deleted_at"`
 		DeletedBy string          `json:"deleted_by_ip"`
 	}
 	if json.Unmarshal([]byte(raw), &d) != nil || d.JobID == "" {
@@ -155,7 +156,8 @@ func deletedRow(raw, queue string) (JobRow, bool) {
 	if !ok {
 		row, _ = deadRow(string(d.Entry), queue)
 	}
-	row.ID, row.From, row.DeletedAt, row.DeletedBy = d.JobID, d.From, d.DeletedAt, d.DeletedBy
+	row.ID, row.From, row.DeletedBy = d.JobID, d.From, d.DeletedBy
+	_ = json.Unmarshal(d.DeletedAt, &row.DeletedAt) // bad timestamp keeps the row with zero DeletedAt
 	if d.Queue != "" {
 		row.Queue = d.Queue
 	} else if row.Queue == "" {
