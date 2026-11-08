@@ -55,6 +55,66 @@ Then start the 0.3.0 workers. Custom DLQ adapters that already `RPUSH` with a ca
 - Idle workers now stop promptly on shutdown. The Redis `Pop` blocked forever on an empty queue (`BRPOPLPUSH` with timeout 0), so `Shutdown` always waited the full timeout and returned `context.DeadlineExceeded`. `Pop` now blocks for at most 1 second and returns an empty job, letting the worker loop re-check for shutdown.
 - The metrics goroutine now also exits on `Shutdown`, not only when the `Start` context is canceled, so `Shutdown` no longer times out when the caller keeps that context alive.
 
+## [0.2.8] - 2026-10-22
+
+### Added
+
+- Reclaim jobs left behind by a crashed process. A Redis job sits in `processing:<queue>` while a worker runs it; if the process is killed (SIGKILL, OOM, host loss) it used to stay there and never run again. `Config.WithReclaimProcessingOnStart(true)` now moves those jobs back onto the queue when `StartWorkers` runs.
+  - Opt-in: only enable it when a single consumer instance serves the queue. With several instances it would also move jobs another instance is still running.
+  - Stores without a processing list are skipped; a reclaim failure is logged and does not stop the workers.
+
+## [0.2.7] - 2026-10-22
+
+### Fixed
+
+- Redis DLQ never received jobs. `RedisDLQ.Push` redeclared `err` while marshalling the job, so `err.Error()` panicked on nil for every job that exhausted its retries.
+- A `DLQAdapter` set by the caller was ignored. `NewQueue` replaced it with the driver default for the Redis and database drivers; the default now applies only when no adapter is set.
+- Database driver init: `NewQueue` used the database store before checking its init error, so a failed connection panicked.
+- A panicking job no longer crashes the process. The job handler runs on its own goroutine, out of reach of the worker's `recover`; a panic now becomes a job error and follows the normal retry / DLQ path.
+
+## [0.2.6] - 2026-08-10
+
+### Fixed
+
+- The Redis client health check no longer closes the shared client after a transient ping failure. It now logs the failure and marks the client unhealthy instead of closing and recreating it, which could break callers still holding the client.
+
+## [0.2.5] - 2026-01-27
+
+### Fixed
+
+- Redis username is now kept: `NewRedisConfig` accepted `username` in 0.2.3 but dropped it. It is now stored in `RedisConfig.Username` and passed to the Redis client manager. Note: the manager does not yet set it on the Redis client options, so ACL usernames are not sent to Redis.
+
+## [0.2.4] - 2026-01-12
+
+### Changed
+
+- Version constant updated to `0.2.4`. No functional changes.
+
+## [0.2.3] - 2026-01-12
+
+First tagged release. Earlier versions (0.0.1 through 0.2.2) were never tagged in git; this entry covers everything from the initial release up to this tag, beyond the 0.0.1 entry below.
+
+### Added
+
+- Database driver (PostgreSQL and MySQL) with migrations and database-backed DLQ adapters.
+- Delay support for all drivers (Memory, Redis, SQS), with unified retry and exponential backoff for Redis and in-memory queues.
+- Redis driver metrics callback.
+- Redis username support: `RedisConfig` has a `Username` field and `NewRedisConfig` now takes `(address, username, password, db)`. This changes the function signature.
+- Integration, end-to-end and example tests for the Memory, Redis and SQS drivers; contribution guide and release script.
+
+### Changed
+
+- Module path moved to `github.com/danish-a1/goqueue`; update imports from `github.com/saravanasai/goqueue`.
+- Worker and database retry logic reworked; logging and configuration references in worker processing refactored.
+- README: corrected the River feature matrix and added upcoming-feature notes.
+
+### Fixed
+
+- In-memory `Retry` was a no-op; it now re-pushes the job and returns an error for a nil job.
+- Concurrency issues in queue handling and retry handling for the Memory and Redis stores.
+- Config validation and MySQL DLQ issues.
+- `fmt.Errorf` called with a non-constant format string when reading metrics errors in the database store.
+
 ## [0.0.1] - 2025-08-15
 
 ### Added
@@ -84,4 +144,9 @@ Then start the 0.3.0 workers. Custom DLQ adapters that already `RPUSH` with a ca
 [Unreleased]: https://github.com/danish-a1/goqueue/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/danish-a1/goqueue/compare/v0.2.9...v0.3.0
 [0.2.9]: https://github.com/danish-a1/goqueue/compare/v0.2.8...v0.2.9
-[0.0.1]: https://github.com/danish-a1/goqueue/releases/tag/v0.0.1
+[0.2.8]: https://github.com/danish-a1/goqueue/compare/v0.2.7...v0.2.8
+[0.2.7]: https://github.com/danish-a1/goqueue/compare/v0.2.6...v0.2.7
+[0.2.6]: https://github.com/danish-a1/goqueue/compare/v0.2.5...v0.2.6
+[0.2.5]: https://github.com/danish-a1/goqueue/compare/v0.2.4...v0.2.5
+[0.2.4]: https://github.com/danish-a1/goqueue/compare/v0.2.3...v0.2.4
+[0.2.3]: https://github.com/danish-a1/goqueue/releases/tag/v0.2.3
