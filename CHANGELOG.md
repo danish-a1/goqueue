@@ -5,17 +5,24 @@ All notable changes to GoQueue will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-08
 
 ### Added
 
-- Tracking keys (Redis): `goqueue:queues` registry, `goqueue:stat:*` processed/failed counters (global, daily, per queue), `goqueue:process:*` worker heartbeats and busy-job hashes. Key names live in `adapter/redis/keys.go`.
+- `dashboard` package: a password-protected web UI served as a plain `http.Handler` (Redis driver only, stdlib only, no new dependencies). Shows totals, per-day history, per-queue counts, job IDs, busy workers, retries, dead and deleted jobs, with Retry / Kill / Delete / Restore (single and batch, atomic Lua moves, nothing is hard-deleted). Mount it with `dashboard.New(dashboard.Options{...})`. An empty access token disables it (404 on every path); tokens must be at least 32 bytes. See `docs/dashboard.md`.
+- Tracking keys (Redis): `goqueue:queues` registry, `goqueue:stat:*` processed/failed counters (global, daily, per queue), `goqueue:process:*` worker heartbeats and busy-job hashes, `goqueue:deleted:<queue>` deleted-job lists. Key names live in `adapter/redis/keys.go`.
+- `examples/dashboard`: runnable demo on miniredis.
 
 ### Changed
 
 - DLQ entries (Redis) now share one shape (`dlq.Entry`): field `queue_name` is renamed `queue`, `job_name` is added, and the error is capped at 256 bytes. `dlq.DecodeEntry` still reads legacy `queue_name`.
 - `RedisDLQ.Push` now uses `RPUSH` (newest entry at the tail instead of the head), keeps at most 1000 entries per queue and expires the list after 30 days.
 - Retry envelopes carry `error_message` and `failed_at` (last failed attempt); `Pop` exposes it as `JobContext.LastError`. Old envelopes without these fields still decode.
+
+### Breaking
+
+- `RedisDLQ` ordering: the newest dead job is now at the tail of the list, not the head. Anything that reads the list by index (`LINDEX 0`, `LRANGE 0 n`) now sees the oldest entries first.
+- `RedisDLQ` field rename: `queue_name` is now `queue`. Readers must use `dlq.DecodeEntry` or accept both names. Entries already stored with `queue_name` stay readable through `DecodeEntry`.
 
 ### Fixed
 
@@ -54,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Worker Management**: Concurrent worker pools with lifecycle management
 - **Metrics**: Built-in metrics collection for monitoring and observability
 
-[Unreleased]: https://github.com/danish-a1/goqueue/compare/v0.2.9...HEAD
+[Unreleased]: https://github.com/danish-a1/goqueue/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/danish-a1/goqueue/compare/v0.2.9...v0.3.0
 [0.2.9]: https://github.com/danish-a1/goqueue/compare/v0.2.8...v0.2.9
 [0.0.1]: https://github.com/danish-a1/goqueue/releases/tag/v0.0.1

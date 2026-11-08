@@ -15,6 +15,10 @@ func TestVersion(t *testing.T) {
 		t.Errorf("GetVersion() = %s, want %s", version, Version)
 	}
 
+	if version != "0.3.0" {
+		t.Errorf("GetVersion() = %s, want 0.3.0", version)
+	}
+
 	// Version should follow semantic versioning pattern
 	if len(version) < 5 { // At least "0.0.1"
 		t.Errorf("Version %s appears to be too short", version)

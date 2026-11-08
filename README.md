@@ -319,6 +319,45 @@ cfg = cfg.WithMetricsCallback(func(metrics config.JobMetrics) {
 })
 ```
 
+## Dashboard
+
+**TL;DR:** a password-protected web UI (Redis driver only) that mounts on any `net/http` or gin router. Details, diagrams and the key table: [docs/dashboard.md](docs/dashboard.md).
+
+Generate a token (at least 32 bytes). An empty token disables the dashboard and every path returns 404:
+
+```bash
+openssl rand -hex 32
+```
+
+net/http:
+
+```go
+h, err := dashboard.New(dashboard.Options{
+    BasePath:    "/goqueue-ui",
+    AccessToken: os.Getenv("GO_QUEUE_ACCESS_TOKEN"),
+    Redis:       redisClient, // redis.UniversalClient
+})
+if err != nil {
+    log.Fatal(err)
+}
+mux.Handle("/goqueue-ui", h)
+mux.Handle("/goqueue-ui/", h)
+```
+
+gin (register both the bare path and the wildcard):
+
+```go
+path := "/goqueue-ui"
+r.Any(path, gin.WrapH(h))
+r.Any(path+"/*rest", gin.WrapH(h))
+```
+
+Notes:
+
+- **Client IP:** the login throttle uses `RemoteAddr` by default. Behind a proxy set `Options.ClientIP` to read a trusted header such as `X-Real-IP` (set by nginx), for example `func(r *http.Request) string { return r.Header.Get("X-Real-IP") }`. Only trust a header your proxy overwrites.
+- **nginx must forward `Host`** (`proxy_set_header Host $host;`). Action POSTs are checked for same origin and get 403 otherwise.
+- **Redis only:** workers must use the Redis store so the tracking keys exist.
+
 ## License
 
 [MIT](LICENSE)
