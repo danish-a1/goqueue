@@ -31,7 +31,7 @@ func NewRedisClientManager(addr, username, password string, db int, logger logge
 	return &RedisClientManager{
 		connectionInfo: RedisConnectionInfo{
 			addr:     addr,
-			username: username,	
+			username: username,
 			password: password,
 			db:       db,
 		},
@@ -143,6 +143,7 @@ func (r *RedisClientManager) CloseAll() error {
 func (r *RedisClientManager) newRedisClient(addr, password string, db int) *redis.Client {
 	return redis.NewClient(&redis.Options{
 		Addr:            addr,
+		Username:        r.connectionInfo.username,
 		Password:        password,
 		DB:              db,
 		PoolSize:        30,
