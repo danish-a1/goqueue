@@ -19,6 +19,15 @@ type QueueStats = stats.QueueStats
 
 const DefaultShutdownTimeout = 5 * time.Second
 
+// Permanent marks a job error as non-retryable: the worker skips the
+// remaining retries and sends the job straight to the DLQ. Wrapping it
+// again with %w keeps the mark. Permanent(nil) is nil.
+func Permanent(err error) error { return job.Permanent(err) }
+
+// IsPermanent reports whether err, or any error it wraps, was marked with
+// Permanent.
+func IsPermanent(err error) bool { return job.IsPermanent(err) }
+
 // GetVersion returns the current version of GoQueue
 func GetVersion() string {
 	return Version

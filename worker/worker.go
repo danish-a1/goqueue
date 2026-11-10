@@ -312,8 +312,9 @@ func (w *Worker) processJobSafely(ctx context.Context, workerID int, job job.Job
 		// Calculate total attempts across retries
 		totalAttempts := job.RetryCount + attempt
 
-		// If we've reached max attempts, break the retry loop
-		if totalAttempts >= maxAttempts {
+		// Max attempts reached, or the handler marked the error permanent
+		// (retrying cannot fix it): stop and dead-letter.
+		if totalAttempts >= maxAttempts || isPermanent(lastErr) {
 			break
 		}
 
@@ -336,7 +337,7 @@ func (w *Worker) processJobSafely(ctx context.Context, workerID int, job job.Job
 	// If we get here, the job has failed after all retry attempts
 	// Send to DLQ if available
 	totalAttempts := job.RetryCount + maxAttemptsThisRun
-	if lastErr != nil && totalAttempts >= maxAttempts {
+	if lastErr != nil && (totalAttempts >= maxAttempts || isPermanent(lastErr)) {
 		if w.config.DLQAdapter != nil {
 			if dlqErr := w.pushDLQ(ctx, &job, lastErr); dlqErr != nil {
 				w.logger.Error("Failed to push job to DLQ after retries", "workerID", workerID, "jobID", job.JobID, "error", dlqErr)
