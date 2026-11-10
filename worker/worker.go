@@ -265,6 +265,13 @@ func (w *Worker) processJobSafely(ctx context.Context, workerID int, job job.Job
 			// completed or failed
 		case <-execCtx.Done():
 			lastErr = execCtx.Err()
+			if ctx.Err() != nil {
+				// Worker ctx canceled (app shutting down), not a job timeout:
+				// the handler already sees the cancel, so wait for it to return.
+				// Abandoning it would let Shutdown finish mid-job and count the
+				// job as failed. Shutdown's own deadline bounds this wait.
+				lastErr = <-done
+			}
 		}
 		cancel()
 		processingTime := time.Since(startTime)
