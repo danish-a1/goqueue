@@ -206,7 +206,7 @@ func (w *Worker) processJobSafely(ctx context.Context, workerID int, job job.Job
 
 		// Send directly to DLQ
 		if w.config.DLQAdapter != nil {
-			if dlqErr := w.config.DLQAdapter.Push(ctx, &job, fmt.Errorf("job exceeded max retry attempts (%d)", maxAttempts)); dlqErr != nil {
+			if dlqErr := w.pushDLQ(ctx, &job, fmt.Errorf("job exceeded max retry attempts (%d)", maxAttempts)); dlqErr != nil {
 				w.logger.Error("Failed to push job to DLQ", "workerID", workerID, "jobID", job.JobID, "error", dlqErr)
 			}
 		}
@@ -338,7 +338,7 @@ func (w *Worker) processJobSafely(ctx context.Context, workerID int, job job.Job
 	totalAttempts := job.RetryCount + maxAttemptsThisRun
 	if lastErr != nil && totalAttempts >= maxAttempts {
 		if w.config.DLQAdapter != nil {
-			if dlqErr := w.config.DLQAdapter.Push(ctx, &job, lastErr); dlqErr != nil {
+			if dlqErr := w.pushDLQ(ctx, &job, lastErr); dlqErr != nil {
 				w.logger.Error("Failed to push job to DLQ after retries", "workerID", workerID, "jobID", job.JobID, "error", dlqErr)
 			}
 		}
@@ -360,6 +360,18 @@ func (w *Worker) processJobSafely(ctx context.Context, workerID int, job job.Job
 			w.logger.Error("Failed to ack job after max retries", "workerID", workerID, "jobID", job.JobID, "error", ackErr)
 		}
 	}
+}
+
+// dlqPushTimeout bounds a DLQ push that no longer follows the worker ctx.
+const dlqPushTimeout = 5 * time.Second
+
+// pushDLQ dead-letters a job. It detaches from the worker ctx's cancellation:
+// during shutdown that ctx is already canceled, so a network DLQ (Redis,
+// SQL) would refuse the push and the job, acked right after, would be lost.
+func (w *Worker) pushDLQ(ctx context.Context, j *job.JobContext, jobErr error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dlqPushTimeout)
+	defer cancel()
+	return w.config.DLQAdapter.Push(ctx, j, jobErr)
 }
 
 // enqueueMetrics adds job completion metrics to the metrics channel.
