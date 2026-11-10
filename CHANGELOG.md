@@ -5,6 +5,12 @@ All notable changes to GoQueue will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6] - 2026-11-10
+
+### Added
+
+- `goqueue.Permanent(err)` (also `job.Permanent`) marks a job error as non-retryable, and `goqueue.IsPermanent(err)` detects the mark. When a handler returns a permanent error (also when wrapped again with `%w`), the worker skips the remaining retries and dead-letters the job at once instead of retrying a request that cannot succeed, such as one an API rejected with a 4xx. The DLQ entry keeps the original error chain. `Permanent(nil)` is nil. Regression tests: `TestPermanentErrorSkipsRetriesAndDeadLetters`, `TestPermanentNilAndIsPermanent`.
+
 ## [0.3.5] - 2026-11-10
 
 ### Fixed

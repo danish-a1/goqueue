@@ -8,7 +8,7 @@
     <a href="https://pkg.go.dev/github.com/danish-a1/goqueue"><img src="https://pkg.go.dev/badge/github.com/danish-a1/goqueue.svg" alt="Go Reference"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
     <img src="https://img.shields.io/badge/Go-%3E=1.18-blue" alt="Go Version">
-    <img src="https://img.shields.io/badge/Version-0.3.5-green" alt="Version">
+    <img src="https://img.shields.io/badge/Version-0.3.6-green" alt="Version">
   </p>
 </div>
 
@@ -223,6 +223,10 @@ cfg = cfg.WithConcurrencyLimit(10)        // Maximum concurrent jobs
 cfg = cfg.WithMaxRetryAttempts(3)         // Max retry attempts for failed jobs
 cfg = cfg.WithRetryDelay(5 * time.Second) // Base delay between retries
 cfg = cfg.WithExponentialBackoff(true)    // Use increasing delays between retries
+
+// In a job: skip retries for an error that retrying cannot fix; the job
+// goes straight to the DLQ. The mark survives further %w wrapping.
+//   return goqueue.Permanent(fmt.Errorf("rejected: %w", err))
 
 // Metrics collection
 cfg = cfg.WithMetricsCallback(func(metrics config.JobMetrics) {
