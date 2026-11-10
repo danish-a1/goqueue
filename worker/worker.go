@@ -365,12 +365,20 @@ func (w *Worker) enqueueMetrics(metrics configuration.JobMetrics) {
 	}
 }
 
+// metricsIdleWait is how long the metrics worker waits before polling again
+// after DequeueMetrics returned nothing or failed. Without it the loop spins:
+// SQS and database stores return immediately when empty, and every store
+// returns immediately on error.
+const metricsIdleWait = time.Second
+
 // startMetricsWorker runs a goroutine that processes job completion metrics
 // and calls the configured metrics callback function.
 func (w *Worker) startMetricsWorker(ctx context.Context) {
 	w.wg.Add(1)
 	go func() {
 		defer w.wg.Done()
+		poll := time.NewTimer(0)
+		defer poll.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -381,11 +389,14 @@ func (w *Worker) startMetricsWorker(ctx context.Context) {
 				if err := w.store.EnqueueMetrics(metrics); err != nil {
 					w.logger.Error("Failed to enqueue metrics", "error", err)
 				}
-			default:
+			case <-poll.C:
+				wait := metricsIdleWait
 				jobCtx, err := w.store.DequeueMetrics(w.queueName)
 				if (err == nil && jobCtx != configuration.JobMetrics{}) {
 					w.config.OnJobComplete(jobCtx)
+					wait = 0 // more may be queued: drain without waiting
 				}
+				poll.Reset(wait)
 			}
 		}
 	}()

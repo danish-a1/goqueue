@@ -5,6 +5,13 @@ All notable changes to GoQueue will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-11-10
+
+### Fixed
+
+- Busy spin in the metrics worker. Its `select` had a `default:` branch that called `DequeueMetrics` back to back, so whenever the call returned at once (SQS and database stores when empty, the memory store before its first metric, any store on error) the goroutine burned a full CPU core and, on errors, flooded the log. It now polls on a timer: after an empty or failed call it waits 1s (`metricsIdleWait`), after a delivered metric it polls again immediately to drain. Shutdown and new metrics still interrupt the wait. Regression tests: `TestMetricsWorkerDoesNotSpinWhenIdle`, `TestMetricsWorkerDeliversMetric`.
+- `TestVersion` no longer hard-codes a version string, which had it failing since 0.3.2.
+
 ## [0.3.2] - 2026-11-10
 
 ### Fixed
