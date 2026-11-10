@@ -5,6 +5,12 @@ All notable changes to GoQueue will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-11-10
+
+### Fixed
+
+- Jobs lost when they failed during shutdown. A job that failed on its last attempt after the worker context was canceled was dead-lettered with that canceled context, so network DLQs (Redis, Postgres, MySQL) refused the push; the job was then acked and gone. DLQ pushes now detach from the worker context's cancellation (`context.WithoutCancel`) with their own 5s timeout (`dlqPushTimeout`). Regression test: `TestDLQPushSurvivesWorkerCtxCancel`.
+
 ## [0.3.4] - 2026-11-10
 
 ### Fixed
