@@ -5,6 +5,12 @@ All notable changes to GoQueue will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-11-10
+
+### Fixed
+
+- Graceful shutdown abandoned in-flight jobs. Apps cancel the worker context (their signal context) before calling `Shutdown`, and `processJobSafely` stopped waiting for the handler as soon as that context was done: the worker exited, `Shutdown` returned while the job was still running, and the job was counted as failed (retried or dead-lettered with `context canceled`). The worker now waits for the handler to return when the worker context is canceled; the handler still sees the cancel, and `Shutdown`'s own deadline bounds the wait. Per-job timeouts still abandon the handler as before. Regression test: `TestShutdownWaitsForInFlightJobAfterCtxCancel`.
+
 ## [0.3.3] - 2026-11-10
 
 ### Fixed
