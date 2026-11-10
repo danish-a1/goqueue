@@ -104,7 +104,10 @@ func (w *Worker) Start(ctx context.Context, noOfWorkers int) error {
 		go w.workerLoop(ctx, i)
 	}
 
-	go w.startMetricsWorker(ctx)
+	// Called synchronously: startMetricsWorker does wg.Add before spawning its
+	// goroutine, and that Add must happen before Start returns so it can never
+	// run concurrently with Shutdown's wg.Wait.
+	w.startMetricsWorker(ctx)
 	w.registerQueue()
 	w.startHeartbeat(ctx, noOfWorkers)
 

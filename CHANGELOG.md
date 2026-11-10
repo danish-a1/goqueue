@@ -5,6 +5,16 @@ All notable changes to GoQueue will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-11-10
+
+### Fixed
+
+- Data race between `Worker.Start` and `Worker.Shutdown`. `Start` launched `startMetricsWorker` with `go`, so its `wg.Add(1)` could run after `Shutdown` had entered `wg.Wait()` (reported by `-race`; an `Add` racing a `Wait` on a zero counter is WaitGroup misuse). `startMetricsWorker` is now called synchronously: it still runs in its own goroutine, but its `Add` happens before `Start` returns. Regression test: `TestWorkerShutdownImmediatelyAfterStart`.
+
+### Docs
+
+- README: Features list and comparison table now mention the web dashboard; version badge corrected (it was stuck at 0.0.1, so `scripts/release.sh` could not bump it).
+
 ## [0.3.1] - 2026-11-08
 
 ### Fixed

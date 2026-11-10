@@ -8,7 +8,7 @@
     <a href="https://pkg.go.dev/github.com/danish-a1/goqueue"><img src="https://pkg.go.dev/badge/github.com/danish-a1/goqueue.svg" alt="Go Reference"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
     <img src="https://img.shields.io/badge/Go-%3E=1.18-blue" alt="Go Version">
-    <img src="https://img.shields.io/badge/Version-0.0.1-green" alt="Version">
+    <img src="https://img.shields.io/badge/Version-0.3.1-green" alt="Version">
   </p>
 </div>
 
@@ -20,6 +20,7 @@ GoQueue is a flexible background job processing library for Go applications, des
 - **Job Management**: automatic retries with backoff, Dead Letter Queue
 - **Concurrency Control**: Configurable worker pools, graceful shutdown
 - **Observability**: Metrics collection, logging support
+- **Web Dashboard** (Redis): password-protected UI with per-queue pending, busy, retry, dead and deleted counts, daily history, live workers, and Retry / Kill / Delete / Restore actions. Mounts as a plain `http.Handler`. See [Dashboard](#dashboard)
 - **Extensibility**: Middleware pipeline for job customization
 - **Code Quality**: Configured with golangci-lint for high code quality standards
 
@@ -50,7 +51,7 @@ Here are some popular alternatives and related frameworks for job queues and bac
 | Test Coverage        | ✅      | ✅    | ✅    | ✅       | ⚠️   | ⚠️        | ⚠️             |
 | AWS SQS Support      | ✅      | ❌    | ❌    | ❌       | ❌   | ❌        | ❌             |
 | Non-blocking Retries | ✅      | ✅    | ✅    | ✅       | ⚠️   | ⚠️        | ⚠️             |
-| UI/CLI Tools         | ⚠️      | ✅    | ✅    | ✅       | ❌   | ❌        | ⚠️             |
+| UI/CLI Tools         | ✅ (UI) | ✅    | ✅    | ✅       | ❌   | ❌        | ⚠️             |
 | Scheduling           | ✅      | ✅    | ✅    | ✅       | ❌   | ⚠️        | ⚠️             |
 | SQL                  | ✅      | ❌    | ✅    | ⚠️       | ❌   | ❌        | ⚠️             |
 
